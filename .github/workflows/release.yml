@@ -1,0 +1,136 @@
+# SPDX-FileCopyrightText: 2026 Callandor GmbH and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Release — PyPI publish + Sigstore artifact signing.
+#
+# Triggers:
+#   - release.published : real publish on tagged GitHub Release
+#   - workflow_dispatch : manual dry-run (build + twine check only,
+#                         no upload, controlled by `dry_run` input)
+#
+# Pre-Publish operator-hand setup (Mira-Hand-Folge, NOT in this workflow):
+#   1. Create PyPI account / project `wakir-verify` (if not yet existing).
+#   2. EITHER set up PyPI Trusted-Publishing (OIDC) for this repo+workflow
+#      under https://pypi.org/manage/account/publishing/
+#        - Owner: wakir-labs
+#        - Repository: wakir-verify
+#        - Workflow filename: release.yml
+#        - Environment: pypi
+#      AND remove the PYPI_API_TOKEN fallback step below, OR
+#   2'. Create PyPI API token scoped to project `wakir-verify` and add it
+#       as repository secret `PYPI_API_TOKEN`. Trusted-Publishing-Variante
+#       wird in v0.2.0-Folge umgestellt.
+#
+# Sigstore signing produces .sigstore bundles attached as release assets.
+
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (build + twine check only, skip upload)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    outputs:
+      is_dry_run: ${{ steps.flags.outputs.is_dry_run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Twine check
+        run: python -m twine check dist/*
+
+      - name: Compute dry-run flag
+        id: flags
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "is_dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_dry_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 14
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    if: needs.build.outputs.is_dry_run == 'false'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/wakir-verify/
+    permissions:
+      # id-token required for PyPI Trusted-Publishing (OIDC).
+      id-token: write
+      contents: read
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI (Trusted-Publishing, OIDC)
+        # Preferred path: PyPI Trusted-Publishing without API token.
+        # Falls back to PYPI_API_TOKEN secret if OIDC not yet configured.
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # If Trusted-Publishing is configured on PyPI, password is unused.
+          # If not, pypa action picks up PYPI_API_TOKEN as password fallback.
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+
+  sign-sigstore:
+    name: Sign artifacts with Sigstore
+    needs: [build, publish-pypi]
+    if: needs.build.outputs.is_dry_run == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Sign with Sigstore
+        uses: sigstore/gh-action-sigstore-python@v3.0.0
+        with:
+          inputs: ./dist/*.tar.gz ./dist/*.whl
+          upload-signing-artifacts: true
+          release-signing-artifacts: true
