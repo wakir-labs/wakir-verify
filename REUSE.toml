@@ -14,3 +14,30 @@ path = ["tests/fixtures/**", "**/*.json"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Callandor GmbH and contributors"
 SPDX-License-Identifier = "Apache-2.0"
+
+# Repo-meta files: build/config/notice files lack inline SPDX headers
+# because their formats (TOML, gitignore, plain-text NOTICE) either
+# do not naturally accept comment-based SPDX headers or are themselves
+# the canonical copyright/notice source. Aggregate them here so REUSE
+# lint stays green without injecting noisy header comments into config.
+[[annotations]]
+path = [".gitignore", "pyproject.toml", "NOTICE", "REUSE.toml"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Callandor GmbH and contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Workflow files carry inline SPDX headers, but list them explicitly
+# for defense-in-depth in case future YAML headers are stripped.
+[[annotations]]
+path = [".github/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Callandor GmbH and contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Markdown docs (READMEs, fixture-docs) under CC-BY-4.0 unless they
+# already declare otherwise inline.
+[[annotations]]
+path = ["**/*.md"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Callandor GmbH and contributors"
+SPDX-License-Identifier = "CC-BY-4.0"
