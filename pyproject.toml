@@ -1,0 +1,56 @@
+[project]
+name = "wakir-verify"
+version = "0.1.0"
+description = "Wakir Audit Trail Verifier — offline brand-proof CLI"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.10"
+authors = [
+  { name = "Callandor GmbH and contributors" },
+]
+keywords = [
+  "audit-trail",
+  "merkle-tree",
+  "bitcoin",
+  "opentimestamps",
+  "verifier",
+  "wakir",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security :: Cryptography",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+  "rfc8785>=0.1.4",
+  "requests>=2.31",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0",
+  "hypothesis>=6.0",
+]
+
+[project.scripts]
+wakir-verify = "wakir_verify.cli:main"
+
+[project.urls]
+Homepage = "https://wakir.dev/"
+Repository = "https://github.com/wakir-labs/wakir-verify"
+Issues = "https://github.com/wakir-labs/wakir-verify/issues"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["wakir_verify*"]
+exclude = ["tests*"]

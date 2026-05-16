@@ -1,0 +1,16 @@
+version = 1
+SPDX-PackageName = "wakir-verify"
+SPDX-PackageSupplier = "Callandor GmbH <legal@callandor.eu>"
+SPDX-PackageDownloadLocation = "https://github.com/wakir-labs/wakir-verify"
+
+[[annotations]]
+path = ["**.py"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Callandor GmbH and contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["tests/fixtures/**", "**/*.json"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Callandor GmbH and contributors"
+SPDX-License-Identifier = "Apache-2.0"

@@ -1,0 +1,37 @@
+{
+  "_comment_mock_marker": "MOCK witness-capture — DO NOT replay as authoritative. Captured live-witness from 2026-05-13-block-948183.json mutated to simulate a chain-split / pole-divergence scenario for hermetic tests. The 'observed_block_hash' on pole_mempool_space has been altered by one nibble (ec73 -> ec74) so the two HTTP poles disagree.",
+  "anchor_hash": "d16216b92bac7653828301b0b8b5595028a636eaf1bfd0f10d9b9a5fbd1b1894",
+  "base_urls": {
+    "pole_esplora_blockstream": "https://blockstream.info/api",
+    "pole_mempool_space": "https://mempool.space/api"
+  },
+  "block_height": 948183,
+  "mode": "witness-capture-mock-divergence",
+  "pole_witnesses": {
+    "pole_esplora_blockstream": {
+      "name": "pole_esplora_blockstream",
+      "note": "",
+      "ok": true,
+      "verdict": "verified",
+      "witness": {
+        "height": 948183,
+        "mode": "witness-capture",
+        "observed_block_hash": "00000000000000000000ec730435b01d9bdd9de0a10f1a8c4a33ea27e52b2110",
+        "url": "https://blockstream.info/api/block-height/948183"
+      }
+    },
+    "pole_mempool_space": {
+      "name": "pole_mempool_space",
+      "note": "",
+      "ok": true,
+      "verdict": "verified",
+      "witness": {
+        "height": 948183,
+        "mode": "witness-capture",
+        "observed_block_hash": "00000000000000000000ec740435b01d9bdd9de0a10f1a8c4a33ea27e52b2110",
+        "url": "https://mempool.space/api/block-height/948183"
+      }
+    }
+  },
+  "schema": "wakir-witness-capture/v1"
+}
