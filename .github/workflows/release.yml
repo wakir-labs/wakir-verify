@@ -8,7 +8,7 @@
 #   - workflow_dispatch : manual dry-run (build + twine check only,
 #                         no upload, controlled by `dry_run` input)
 #
-# Pre-Publish operator-hand setup (Mira-Hand-Folge, NOT in this workflow):
+# Pre-Publish operator-hand setup (operator-hand follow-up, NOT in this workflow):
 #   1. Create PyPI account / project `wakir-verify` (if not yet existing).
 #   2. EITHER set up PyPI Trusted-Publishing (OIDC) for this repo+workflow
 #      under https://pypi.org/manage/account/publishing/

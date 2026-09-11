@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Callandor GmbH and contributors
 
-"""CLI text-mode and witness-capture mode tests (Sprint-8 Tag-2).
+"""CLI text-mode and witness-capture mode tests.
 
-Splits cleanly from ``test_cli.py``: that file pins Tag-1's JSON-only
-surface (default output-format=json), this one pins the Tag-2 text
+Splits cleanly from ``test_cli.py``: that file pins the earlier increment's JSON-only
+surface (default output-format=json), this one pins the text
 renderer and the ``--capture-witnesses`` mode.
 
 Brand-language pins (ADR-0055):
@@ -13,7 +13,7 @@ Brand-language pins (ADR-0055):
 * Per-pole line carries a status symbol and the pole's substantive
   observation.
 * Block-end "Quorum conclusion" section names the threshold
-  explicitly so the Aufsichtsrat-reader does not have to know the
+  explicitly so the external reviewer does not have to know the
   policy enum.
 """
 
@@ -76,7 +76,7 @@ def test_cli_text_mode_renders_offline_quorum_block(tmp_path, capsys):
 
 
 def test_cli_text_mode_default_is_json_for_backwards_compat(tmp_path, capsys):
-    """Tag-1 contract: omitting --output-format yields JSON, not text."""
+    """Original contract: omitting --output-format yields JSON, not text."""
     receipt = _make_receipt(tmp_path)
     rc = cli_main(
         ["--anchor", ANCHOR_HEX, "--ots-proof", str(receipt)]
@@ -110,7 +110,7 @@ def test_cli_text_mode_carries_pole_substance(tmp_path, capsys):
 
 
 # ---------------------------------------------------------------------------
-# --save-witnesses (Tag-2 substantive: persists alongside text or JSON)
+# --save-witnesses (persists alongside text or JSON)
 # ---------------------------------------------------------------------------
 
 

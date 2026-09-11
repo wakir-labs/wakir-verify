@@ -26,9 +26,9 @@ Output: JSON (default) or human-readable text to stdout. Exit codes:
 * 1 — quorum not reached (audit-failure verdict).
 * 2 — CLI usage error.
 
-The default ``--output-format`` is JSON because the original Tag-1
+The default ``--output-format`` is JSON because the original
 audit contract was JSON-pipeable to ``jq``; the text mode is for
-brand-demo and Aufsichtsrat-readable verification reports and uses
+brand-demo and reviewer-readable verification reports and uses
 the Operator-Plattform wording from ADR-0055.
 
 The ``--capture-witnesses`` mode is the brand-proof witness-capture
@@ -164,7 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="json",
         help=(
             "json (default, audit-pipeable) or text "
-            "(human-readable, brand-demo and Aufsichtsrat-friendly)."
+            "(human-readable, brand-demo and reviewer-readable)."
         ),
     )
     p.add_argument(

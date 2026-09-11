@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Callandor GmbH and contributors
 
-"""Multi-version python-bitcoinlib drift probe (Sprint-8 Tag-4 Teil B).
+"""Multi-version python-bitcoinlib drift probe (Part B).
 
 Background
 ----------

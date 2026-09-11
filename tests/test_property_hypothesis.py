@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Callandor GmbH and contributors
 
-"""Hypothesis property-tests for the external-verifier surface (Sprint-8 Tag-4).
+"""Hypothesis property-tests for the external-verifier surface.
 
 Background
 ----------
 
-Sprint-8 Tag-3 (TV-DET-3) shipped a parser-determinism check using
+An earlier increment (TV-DET-3) shipped a parser-determinism check using
 ``stdlib`` ``random.Random(seed)`` over fifty hand-rolled seeds. That
 was a stand-in: substantive shrinking, drift-finding, and
 counter-example minimisation are the value-add of a real
-property-based testing library. Tag-4 deepens TV-DET-3 with five
+property-based testing library. This module deepens TV-DET-3 with five
 Hypothesis-driven property-tests over the parser, aggregator, and
 discrepancy-summary surface.
 

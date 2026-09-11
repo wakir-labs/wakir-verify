@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Callandor GmbH and contributors
 
-"""Multi-pole determinism + discrepancy audit (Sprint-8 Tag-3).
+"""Multi-pole determinism + discrepancy audit.
 
 The Position-Paper §L4-References annex claims that four independent
 implementations agree byte-precisely on a valid OTS-anchor proof.
-Sprint-8 Tag-1 shipped the surface, Tag-2 shipped a live capture
-against block 948183. Tag-3 hardens the cross-library claim with two
+Earlier increments shipped the surface and a live capture
+against block 948183. This module hardens the cross-library claim with two
 audit axes:
 
 1.  **Determinism.** Re-running the verifier on the same input must
@@ -19,7 +19,7 @@ audit axes:
 2.  **Discrepancy handling.** When two poles disagree on substance,
     the aggregator must surface the disagreement in a structured way
     so an auditor can read the verdict + the divergence pattern
-    without flattening pole_results by hand. The Tag-3 helper
+    without flattening pole_results by hand. The helper
     :func:`summarise_discrepancies` provides the structured report.
 
 Test-vector matrix (TV-DET-*):
@@ -115,7 +115,7 @@ def _overrides_from_live(captured: dict) -> dict:
 
     Distinct from the helper in :mod:`test_witness_captures` so the
     determinism tests stay decoupled: any future change to the
-    Tag-2 helper must not silently change Tag-3 expectations.
+The capture helper must not silently change the audit expectations.
     """
     height = captured["block_height"]
     canonical_hash = captured["pole_witnesses"][

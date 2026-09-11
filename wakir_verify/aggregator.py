@@ -198,7 +198,7 @@ def verify_wat_anchor(
 
 
 # ---------------------------------------------------------------------------
-# Discrepancy summary (Sprint-8 Tag-3 determinism-audit helper)
+# Discrepancy summary (determinism-audit helper)
 # ---------------------------------------------------------------------------
 
 
