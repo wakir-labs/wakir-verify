@@ -115,7 +115,7 @@ def _extract_heights_from_text(text: str) -> list[int]:
 # * pyopentimestamps is not a Wakir runtime hard-dependency
 #   (boring-tech bias: zero PyPI surface to audit on a brand-proof
 #   verifier), and
-# * the Sprint-8 Tag-1 deliverable is the **surface** plus the
+# * the deliverable is the **surface** plus the
 #   cross-library aggregation contract, not a re-implementation of
 #   the OTS proof-tree walk.
 #

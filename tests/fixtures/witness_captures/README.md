@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Callandor GmbH and contributors
 # `tests/wat/external_verifier/witness_captures/` — Saved Witness Fixtures
 
 This directory holds the brand-proof witness-capture JSON artefacts
-the Tag-2 `wat-verify --capture-witnesses` command emits. Each file
+the `wat-verify --capture-witnesses` command emits. Each file
 records the canonical Bitcoin block hash observed by mempool.space
 and blockstream.info at the moment of capture, pinned next to the
 WAT anchor hash and the block height.

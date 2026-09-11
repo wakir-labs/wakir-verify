@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Callandor GmbH and contributors
 
-"""Witness-capture fixture-replay test suite (Sprint-8 Tag-2).
+"""Witness-capture fixture-replay test suite.
 
 These tests pin the contract between the saved witness-capture JSON
 files under ``tests/fixtures/witness_captures/`` and the
@@ -15,7 +15,7 @@ Test-vector matrix:
 * **TV-WC-1 — live-capture replay, quorum-pass**
   Replays the live 2026-05-13 capture against block 948183. The
   saved canonical hash from both HTTP poles is the same as the
-  Tag-15 ``docs/wat-tv1-live-run-2026-05-07.md`` recorded hash, so
+  the ``docs/wat-tv1-live-run-2026-05-07.md`` recorded hash, so
   the offline-replay 4-pole quorum verifies under default 3-of-4.
 
 * **TV-WC-2 — live-capture replay, strict-policy passes**
