@@ -1,0 +1,48 @@
+{
+  "schema": "wakir-proof-path-vector/v1",
+  "vector_id": "vector-1",
+  "description": "Single leaf: the Merkle root equals the leaf hash and the inclusion proof has an empty sibling path.",
+  "hash_rules": {
+    "hash": "sha256",
+    "leaf": "sha256(JCS({event_id,time,payload_hash,capability_token_hash})) per RFC 8785; all four keys always present, capability_token_hash may be the empty string",
+    "inner": "sha256(left || right) over the raw 32-byte digests",
+    "odd_level": "duplicate the last node before pairing (Bitcoin convention); a single leaf is the root with an empty sibling path",
+    "sibling_side": "L means sha256(sibling || current); R means sha256(current || sibling)"
+  },
+  "leaves": [
+    {
+      "event_id": "01JVZ000000000000000000001",
+      "time": "2026-05-17T12:01:00Z",
+      "payload_hash": "2e6709af8dbfe7cd5abb2f716924848e527b4486c30c4509b0e4aa8171987335",
+      "capability_token_hash": "860bc5c69e5ac057f0a92063de1f273283338f6182c3113a3e159ff2e425c05a"
+    }
+  ],
+  "leaf_hashes": [
+    "f6a6f7f2126f37c141544a17eb15b5712e49a1ecb2c760fcf13ac762bc8d775a"
+  ],
+  "levels": [
+    [
+      "f6a6f7f2126f37c141544a17eb15b5712e49a1ecb2c760fcf13ac762bc8d775a"
+    ]
+  ],
+  "merkle_root": "f6a6f7f2126f37c141544a17eb15b5712e49a1ecb2c760fcf13ac762bc8d775a",
+  "proofs": [
+    {
+      "schema": "wakir-inclusion-proof/v1",
+      "manifest_version": "wakir-wat-manifest/v1",
+      "hour": "2026-05-17T12",
+      "merkle_root": "f6a6f7f2126f37c141544a17eb15b5712e49a1ecb2c760fcf13ac762bc8d775a",
+      "leaf_hash": "f6a6f7f2126f37c141544a17eb15b5712e49a1ecb2c760fcf13ac762bc8d775a",
+      "leaf_index": 0,
+      "leaf_count": 1,
+      "event_id": "01JVZ000000000000000000001",
+      "siblings": []
+    }
+  ],
+  "expected": [
+    {
+      "leaf_index": 0,
+      "verified": true
+    }
+  ]
+}
