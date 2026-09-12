@@ -1,0 +1,138 @@
+# SPDX-FileCopyrightText: 2026 Callandor GmbH and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# compat — proof-path compatibility gate against wakir-runtime main
+# (ADR-0072 Phase 4, sub-item 4c; see docs/quality-gates.md).
+#
+# What it proves: the wakir_verify library *from this PR* still closes
+# the proof path that wakir-runtime@main drives with `make demo-proof`
+# (manifest load, root re-derivation, inclusion-proof verification),
+# and the shared proof-path vectors from wakir-protocol@main still
+# re-derive through this PR's Merkle code.
+#
+# No path filter on purpose: the job name below is destined to be a
+# required status check, and a filtered-out run would leave PRs
+# pending forever.
+
+name: compat
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUNTIME_REPO: https://github.com/wakir-labs/wakir-runtime.git
+  PROTOCOL_REPO: https://github.com/wakir-labs/wakir-protocol.git
+  DEMO_PROOF_HOUR: "2026-05-17T12"
+
+jobs:
+  compat:
+    name: compat (proof-path against runtime main)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout wakir-verify (PR state)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+
+      - name: Install wakir-verify from this checkout
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Clone wakir-runtime@main and wakir-protocol@main (depth 1)
+        id: clones
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch main "$RUNTIME_REPO" "$RUNNER_TEMP/runtime"
+          git clone --depth 1 --branch main "$PROTOCOL_REPO" "$RUNNER_TEMP/protocol"
+          runtime_sha="$(git -C "$RUNNER_TEMP/runtime" rev-parse HEAD)"
+          protocol_sha="$(git -C "$RUNNER_TEMP/protocol" rev-parse HEAD)"
+          echo "runtime_sha=$runtime_sha" >> "$GITHUB_OUTPUT"
+          echo "protocol_sha=$protocol_sha" >> "$GITHUB_OUTPUT"
+          echo "::notice title=compat baselines::runtime@main=$runtime_sha protocol@main=$protocol_sha"
+
+      - name: Install wakir-runtime@main into the same environment
+        run: python -m pip install -e "$RUNNER_TEMP/runtime"
+
+      - name: Assert wakir_verify resolves to this checkout
+        run: |
+          set -euo pipefail
+          resolved="$(python -c 'import wakir_verify, pathlib; print(pathlib.Path(wakir_verify.__file__).resolve())')"
+          echo "wakir_verify -> $resolved"
+          case "$resolved" in
+            "$GITHUB_WORKSPACE"/*) ;;
+            *) echo "::error::wakir_verify resolved outside the PR checkout: $resolved"; exit 1 ;;
+          esac
+
+      - name: make demo-proof (runtime@main driver, PR wakir-verify)
+        working-directory: ${{ runner.temp }}/runtime
+        env:
+          DEMO_PROOF_WORKDIR: ${{ runner.temp }}/demo
+          DEMO_PROOF_PROTOCOL_COMMIT: ${{ steps.clones.outputs.protocol_sha }}
+          DEMO_PROOF_VERIFY_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$DEMO_PROOF_WORKDIR"
+          rc=0
+          make demo-proof > "$DEMO_PROOF_WORKDIR/demo-report.stdout.json" || rc=$?
+          echo "make demo-proof exit code: $rc"
+          test "$rc" -eq 0
+
+      - name: Validate demo report (runtime validator, external_verify must be ok)
+        env:
+          REPORT: ${{ runner.temp }}/demo/demo-report.json
+          RUNTIME_SHA: ${{ steps.clones.outputs.runtime_sha }}
+          RUNTIME_VALIDATOR: ${{ runner.temp }}/runtime/scripts/ci/validate_demo_proof_report.py
+        run: |
+          set -euo pipefail
+          # scripts/ci/validate_demo_proof_report.py is on runtime@main since
+          # ADR-0072 W3. A missing validator is drift on the runtime side and
+          # fails this gate; the pre-W3 stdlib fallback has been removed.
+          if [ ! -f "$RUNTIME_VALIDATOR" ]; then
+            echo "::error title=compat validator::runtime validator missing at $RUNTIME_VALIDATOR (runtime@main=$RUNTIME_SHA)"
+            exit 1
+          fi
+          echo "::notice title=compat validator::using runtime validator scripts/ci/validate_demo_proof_report.py from runtime@main=$RUNTIME_SHA (W3)"
+          # The validator pins commits.wakir_runtime to --expect-commit (or
+          # GITHUB_SHA, which here would be the verify commit) — hand it the
+          # runtime clone's HEAD explicitly.
+          python "$RUNTIME_VALIDATOR" "$REPORT" \
+            --require-external-verify-ok \
+            --expect-commit "$RUNTIME_SHA"
+
+      - name: Proof-path vector tests (hermetic + protocol@main) and loader pin
+        env:
+          WAKIR_PROTOCOL_CHECKOUT: ${{ runner.temp }}/protocol
+          WAKIR_RUNTIME_CHECKOUT: ${{ runner.temp }}/runtime
+          WAKIR_RUNTIME_MANIFEST: ${{ runner.temp }}/demo/${{ env.DEMO_PROOF_HOUR }}/manifest.json
+        run: |
+          pytest tests/test_proof_path_vectors.py tests/test_manifest_runtime_compat.py -v -rs
+
+      - name: Upload demo-proof artefacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: compat-demo-proof
+          path: |
+            ${{ runner.temp }}/demo/demo-report.json
+            ${{ runner.temp }}/demo/proof.json
+            ${{ runner.temp }}/demo/verify-result.json
+            ${{ runner.temp }}/demo/${{ env.DEMO_PROOF_HOUR }}/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
