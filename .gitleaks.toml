@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 Callandor GmbH and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# gitleaks configuration for wakir-verify (ADR-0072 Phase 4, Sub-Item 4f).
+# Consumed by .github/workflows/secret-scan.yml (full-history scan on every
+# pull request and on push to main). The one-off 2026-09 history scan of
+# all three wakir repos is documented in
+# wakir-runtime/docs/security/secret-scan-2026-09.md (counts only).
+#
+# Policy
+#   - Default gitleaks rules, unchanged (`useDefault = true`).
+#   - Every allowlist entry is as narrow as possible: path AND content
+#     shape (`condition = "AND"`) wherever a path is involved, and each
+#     entry carries the reason it is a non-secret. Blanket allowlisting of
+#     tests/** or fixtures/** is NOT acceptable — add a new narrow entry
+#     with a justification comment instead.
+#   - Entries were reviewed against the 2026-09 history scan (gitleaks
+#     v8.30.1). Remove an entry when its subject leaves the history.
+
+title = "wakir-verify gitleaks config"
+
+[extend]
+useDefault = true
+
+# --- Structural false positives (field shape, repo-wide) -------------------
+
+[[allowlists]]
+# WAT manifest / proof-path vectors: `capability_token_hash` is the SHA-256
+# digest of a capability token (hex64), never the token itself. Trips
+# generic-api-key only because of the `token` keyword in the field name.
+description = "WAT capability_token_hash is a SHA-256 digest field, not a token"
+regexTarget = "line"
+regexes = ['''"capability_token_hash":\s*"[0-9a-f]{64}"''']
