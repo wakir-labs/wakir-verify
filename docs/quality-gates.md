@@ -50,14 +50,19 @@ are identical for both shapes. Constant:
 in `tests/test_manifest_runtime_compat.py`. Changing either side is
 allowed, but must come with an update to that test.
 
-**Arming schedule.** The report validation uses runtime's
-`scripts/ci/validate_demo_proof_report.py --require-external-verify-ok`
-once it exists on `runtime@main`; until then the workflow runs a marked
-fallback check (stdlib only, same assertions, logged as `FALLBACK`).
-Schema validation of the vector proof documents against
-`wakir_protocol/schemas/wakir-inclusion-proof-v1.json` skips with a
-reason while protocol ships the stub (`x-status: stub`) and arms
-automatically once the canonical schema is merged.
+**Arming state.** Fully armed. The report validation runs runtime's
+`scripts/ci/validate_demo_proof_report.py <report>
+--require-external-verify-ok --expect-commit <runtime@main HEAD>` (on
+`runtime@main` since W3); a missing validator is a hard failure, there
+is no fallback path any more. Schema validation of the vector proof
+documents runs against the canonical
+`wakir_protocol/schemas/wakir-inclusion-proof-v1.json` (`$id` …/0.1.0,
+`additionalProperties: false`, on `protocol@main` since `aeba192`); a
+stub or permissive schema upstream fails the test instead of skipping.
+The hermetic vector copy and `VECTOR_PINS` are taken from protocol
+`aeba192` (vectors embed a runtime-form `manifest`; vector-2 root
+`1f465e05…`). A pin mismatch means protocol moved the vectors again:
+refresh copy and pins in one PR after confirming the change.
 
 **Evidence for audit consumers.** A green run is functional test
 evidence for the proof path at one commit pair; it is not an audit

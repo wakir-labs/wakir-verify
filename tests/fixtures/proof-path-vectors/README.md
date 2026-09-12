@@ -8,8 +8,14 @@ SPDX-FileCopyrightText: 2026 Callandor GmbH and contributors
 Canonical home: **wakir-protocol**, `tests/fixtures/proof-path-vectors/`
 (`vector-1.json`, `vector-2.json`, `vector-3.json`). The files here are a
 byte-for-byte copy taken at protocol commit
-`b7de6316d19b3b54125648b2b1a78f171156f5eb` so that `pytest` in this
-repository runs without a network and without a second checkout.
+`aeba192e0b60e04cb4e56b7da51faa4e3be14a46` (ADR-0072 W4 canonical schema
+set) so that `pytest` in this repository runs without a network and
+without a second checkout. Since that commit each vector also embeds a
+`manifest` object in runtime aggregator form (`version`, `hour_slot`,
+`events`, `leaves`, `tree_levels`, …) and vector-2 leaf 3 carries a
+64-hex `capability_token_hash` (root `1f465e05…`); the proof documents
+in `proofs[]` validate against the canonical
+`wakir_protocol/schemas/wakir-inclusion-proof-v1.json`.
 
 `tests/test_proof_path_vectors.py` loads both this copy and, when
 `WAKIR_PROTOCOL_CHECKOUT` points at a protocol checkout, the canonical

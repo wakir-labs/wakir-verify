@@ -31,11 +31,16 @@ Invariants exercised (per vector):
    carries its own hash as the level-0 sibling on side ``R``
 5. vector-3: the untouched proof does **not** verify the tampered leaf
 6. every proof document validates against the canonical
-   ``wakir-inclusion-proof-v1`` schema from protocol — armed only once
-   protocol ships the canonical schema (today it is a stub marked
-   ``x-status: stub``; the test skips with that reason until then)
+   ``wakir-inclusion-proof-v1`` schema from protocol (``$id`` …/0.1.0,
+   ``additionalProperties: false``); a stub or a permissive schema in
+   protocol is a hard failure, not a skip — armed since protocol
+   ``aeba192`` (ADR-0072 W4, canonical schema set)
 7. optionally, every proof document validates against the runtime-side
-   draft schema when ``WAKIR_RUNTIME_CHECKOUT`` is set
+   mirror of that schema when ``WAKIR_RUNTIME_CHECKOUT`` is set
+8. every proof document is coherent with the vector's embedded
+   ``manifest`` (runtime aggregator form): ``manifest_version`` ==
+   ``manifest.version``, ``hour`` == ``manifest.hour_slot``,
+   ``merkle_root`` and ``leaf_count`` match
 """
 
 from __future__ import annotations
@@ -70,18 +75,22 @@ RUNTIME_SCHEMA_REL = Path("wirelang") / "schemas" / "wakir-inclusion-proof-v1.js
 VECTOR_FILES = ("vector-1.json", "vector-2.json", "vector-3.json")
 
 #: Source commit of the hermetic copy in wakir-protocol.
-VECTOR_SOURCE_COMMIT = "b7de6316d19b3b54125648b2b1a78f171156f5eb"
+VECTOR_SOURCE_COMMIT = "aeba192e0b60e04cb4e56b7da51faa4e3be14a46"
 
 #: sha256(RFC 8785 JCS(parsed JSON)) per vector file. Content pin —
 #: whitespace and key order are irrelevant, every value is not.
 VECTOR_PINS: Dict[str, str] = {
-    "vector-1.json": "26004ec8318fdb0ae3e5361cb6cd264bd18d8e70c7d5c34ce44852f0a0feefa2",
-    "vector-2.json": "80f0e674509da8f62fc82afbd19650c1c155471c5b2c33e32e3700f6a2f33985",
-    "vector-3.json": "ce49fcb782c60f5774728fd8a0070eb69919dafd9e1fd6d91a57add2cf4d8363",
+    "vector-1.json": "e26fb4a1f82689c5306169066c299a33581a36af5bf1def8562ddd2613a852a6",
+    "vector-2.json": "6fba7614ad16b3a0b7dcf64f53ef65949ecc5f275e2edf89acc2b29fe54c9638",
+    "vector-3.json": "c8e1b4287543bbb1775e285d8980a8bffb585f56b41c79c0d748749bfd934cb5",
 }
 
 VECTOR_SCHEMA = "wakir-proof-path-vector/v1"
 PROOF_SCHEMA = "wakir-inclusion-proof/v1"
+MANIFEST_VERSION = "wakir-wat-manifest/v1"
+CANONICAL_PROOF_SCHEMA_ID = (
+    "https://wakir.dev/wirelang/schema/wakir-inclusion-proof-v1/0.1.0"
+)
 LEAF_KEYS = ("event_id", "time", "payload_hash", "capability_token_hash")
 
 PROTOCOL_ENV = "WAKIR_PROTOCOL_CHECKOUT"
@@ -135,13 +144,6 @@ def _leaf_hashes(vec: Dict[str, Any]) -> List[bytes]:
 
 def _load_schema(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _is_stub(schema: Dict[str, Any]) -> bool:
-    return (
-        schema.get("x-status") == "stub"
-        or "STUB" in str(schema.get("title", ""))
-    )
 
 
 def _validator(schema: Dict[str, Any]):
@@ -280,42 +282,87 @@ def test_vector_3_tampered_leaf_does_not_verify(source: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Invariant 6: canonical schema from protocol (arms after Reza's W4 merge)
+# Invariant 6: canonical schema from protocol (armed since protocol aeba192)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", VECTOR_FILES)
-def test_proof_docs_validate_against_protocol_canonical_schema(name: str) -> None:
+def _canonical_schema() -> Dict[str, Any]:
+    """Load the canonical proof schema from protocol; refuse stubs."""
     protocol_root = _checkout_from_env(PROTOCOL_ENV, "wakir-protocol")
     schema_path = protocol_root / PROTOCOL_SCHEMA_REL
     assert schema_path.is_file(), f"protocol schema missing at {schema_path}"
     schema = _load_schema(schema_path)
-    if _is_stub(schema):
-        pytest.skip(
-            "wakir-protocol still ships the W4 stub for wakir-inclusion-proof/v1 "
-            "(x-status=stub); canonical validation arms automatically once the "
-            "canonical schema (ADR-0072 W4, protocol) is merged"
-        )
-    assert schema.get("$id", "").startswith(
-        "https://wakir.dev/wirelang/schema/wakir-inclusion-proof-v1/"
-    ), schema.get("$id")
-    validator = _validator(schema)
-    vec = _load_vector("protocol", name)
-    for doc in _all_proof_docs(vec):
+    # The canonical schema is merged (protocol aeba192). A stub marker or
+    # a permissive schema reappearing upstream is drift, not a pending arm.
+    assert schema.get("x-status") != "stub", "protocol regressed to a stub schema"
+    assert "STUB" not in str(schema.get("title", "")), schema.get("title")
+    assert schema.get("$id") == CANONICAL_PROOF_SCHEMA_ID, schema.get("$id")
+    assert schema.get("additionalProperties") is False, (
+        "canonical proof schema must be closed (additionalProperties: false)"
+    )
+    return schema
+
+
+@pytest.mark.parametrize("source", SOURCES)
+@pytest.mark.parametrize("name", VECTOR_FILES)
+def test_proof_docs_validate_against_protocol_canonical_schema(source: str, name: str) -> None:
+    validator = _validator(_canonical_schema())
+    vec = _load_vector(source, name)
+    docs = _all_proof_docs(vec)
+    assert docs, f"{name}: no proof documents"
+    for doc in docs:
         validator.validate(doc)
 
 
+def test_protocol_canonical_schema_rejects_extra_and_missing_fields() -> None:
+    """Negative control: the armed schema actually bites."""
+    jsonschema = pytest.importorskip("jsonschema")
+    validator = _validator(_canonical_schema())
+    doc = dict(_load_vector("hermetic", "vector-2.json")["proofs"][2])
+    validator.validate(doc)  # honest document passes
+
+    with_extra = {**doc, "x-unexpected": "drift"}
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate(with_extra)
+
+    without_required = {k: v for k, v in doc.items() if k != "siblings"}
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate(without_required)
+
+
 # ---------------------------------------------------------------------------
-# Invariant 7: runtime-side draft schema (compat workflow, optional)
+# Invariant 7: runtime-side mirror of the schema (compat workflow, optional)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("name", VECTOR_FILES)
-def test_proof_docs_validate_against_runtime_draft_schema(name: str) -> None:
+def test_proof_docs_validate_against_runtime_schema_mirror(name: str) -> None:
     runtime_root = _checkout_from_env(RUNTIME_ENV, "wakir-runtime")
     schema_path = runtime_root / RUNTIME_SCHEMA_REL
-    assert schema_path.is_file(), f"runtime draft schema missing at {schema_path}"
+    assert schema_path.is_file(), f"runtime schema mirror missing at {schema_path}"
     validator = _validator(_load_schema(schema_path))
     vec = _load_vector("hermetic", name)
     for doc in _all_proof_docs(vec):
         validator.validate(doc)
+
+
+# ---------------------------------------------------------------------------
+# Invariant 8: proofs are coherent with the embedded runtime-form manifest
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("source", SOURCES)
+@pytest.mark.parametrize("name", VECTOR_FILES)
+def test_proof_docs_are_coherent_with_embedded_manifest(source: str, name: str) -> None:
+    vec = _load_vector(source, name)
+    manifest = vec["manifest"]
+    assert manifest["version"] == MANIFEST_VERSION
+    assert manifest["merkle_root"] == vec["merkle_root"]
+    assert manifest["event_count"] == len(vec["leaves"])
+    assert [row["leaf_hash"] for row in manifest["leaves"]] == vec["leaf_hashes"]
+    assert manifest["tree_levels"] == vec["levels"]
+    for doc in _all_proof_docs(vec):
+        assert doc["manifest_version"] == manifest["version"]
+        assert doc["hour"] == manifest["hour_slot"]
+        assert doc["merkle_root"] == manifest["merkle_root"]
+        assert doc["leaf_count"] == manifest["event_count"]

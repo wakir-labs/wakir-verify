@@ -26,6 +26,37 @@
     ]
   ],
   "merkle_root": "f6a6f7f2126f37c141544a17eb15b5712e49a1ecb2c760fcf13ac762bc8d775a",
+  "manifest": {
+    "version": "wakir-wat-manifest/v1",
+    "hour_slot": "2026-05-17T12",
+    "merkle_root": "f6a6f7f2126f37c141544a17eb15b5712e49a1ecb2c760fcf13ac762bc8d775a",
+    "event_count": 1,
+    "events": [
+      {
+        "event_id": "01JVZ000000000000000000001",
+        "time": "2026-05-17T12:01:00Z",
+        "payload_hash": "2e6709af8dbfe7cd5abb2f716924848e527b4486c30c4509b0e4aa8171987335",
+        "capability_token_hash": "860bc5c69e5ac057f0a92063de1f273283338f6182c3113a3e159ff2e425c05a",
+        "leaf_hash": "f6a6f7f2126f37c141544a17eb15b5712e49a1ecb2c760fcf13ac762bc8d775a"
+      }
+    ],
+    "leaves": [
+      {
+        "event_id": "01JVZ000000000000000000001",
+        "time": "2026-05-17T12:01:00Z",
+        "payload_hash": "2e6709af8dbfe7cd5abb2f716924848e527b4486c30c4509b0e4aa8171987335",
+        "capability_token_hash": "860bc5c69e5ac057f0a92063de1f273283338f6182c3113a3e159ff2e425c05a",
+        "leaf_hash": "f6a6f7f2126f37c141544a17eb15b5712e49a1ecb2c760fcf13ac762bc8d775a"
+      }
+    ],
+    "tree_levels": [
+      [
+        "f6a6f7f2126f37c141544a17eb15b5712e49a1ecb2c760fcf13ac762bc8d775a"
+      ]
+    ],
+    "build_time": "2026-05-17T13:00:00Z",
+    "prev_hour_root": null
+  },
   "proofs": [
     {
       "schema": "wakir-inclusion-proof/v1",

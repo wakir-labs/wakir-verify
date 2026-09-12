@@ -22,6 +22,12 @@ identical for both shapes and are asserted identical.
 
 ``RUNTIME_TO_LOADER_FIELDS`` is the documented constant; keep it in
 sync with ``docs/quality-gates.md``.
+
+Since protocol ``aeba192`` every proof-path vector embeds a real
+``manifest`` in runtime aggregator form. Those are loaded under the same
+pin below, and the synthetic ``_runtime_shape`` mirror (``build_time``
+taken from the vector) is asserted equal to the embedded manifest so the
+two cannot drift apart unnoticed.
 """
 
 from __future__ import annotations
@@ -54,13 +60,12 @@ MANIFEST_VERSION = "wakir-wat-manifest/v1"
 
 RUNTIME_MANIFEST_ENV = "WAKIR_RUNTIME_MANIFEST"
 
-HERMETIC_VECTOR = (
-    Path(__file__).resolve().parent / "fixtures" / "proof-path-vectors" / "vector-2.json"
-)
+HERMETIC_DIR = Path(__file__).resolve().parent / "fixtures" / "proof-path-vectors"
+VECTOR_FILES = ("vector-1.json", "vector-2.json", "vector-3.json")
 
 
-def _vector() -> Dict[str, Any]:
-    return json.loads(HERMETIC_VECTOR.read_text(encoding="utf-8"))
+def _vector(name: str = "vector-2.json") -> Dict[str, Any]:
+    return json.loads((HERMETIC_DIR / name).read_text(encoding="utf-8"))
 
 
 def _runtime_shape(vec: Dict[str, Any]) -> Dict[str, Any]:
@@ -77,7 +82,7 @@ def _runtime_shape(vec: Dict[str, Any]) -> Dict[str, Any]:
         "events": rows,
         "leaves": rows,
         "tree_levels": vec["levels"],
-        "build_time": "2026-05-17T12:59:59Z",
+        "build_time": vec["manifest"]["build_time"],
         "prev_hour_root": None,
     }
 
@@ -141,6 +146,36 @@ def test_runtime_leaf_rows_carry_full_four_tuple_plus_leaf_hash() -> None:
     loaded = load_manifest_from_dict(_runtime_shape(vec))
     assert loaded.leaves[0].event_id == row["event_id"]
     assert loaded.leaves[0].hex() == row["leaf_hash"]
+
+
+@pytest.mark.parametrize("name", VECTOR_FILES)
+def test_synthetic_runtime_shape_equals_embedded_vector_manifest(name: str) -> None:
+    """The local mirror of ``_build_manifest_object`` must match protocol."""
+    vec = _vector(name)
+    assert _runtime_shape(vec) == vec["manifest"]
+
+
+@pytest.mark.parametrize("name", VECTOR_FILES)
+def test_embedded_vector_manifest_loads_under_the_pin(name: str) -> None:
+    """Same pin against the manifest protocol embeds in each vector."""
+    vec = _vector(name)
+    blob = vec["manifest"]
+    for runtime_key in RUNTIME_TO_LOADER_FIELDS:
+        assert runtime_key in blob, f"{name}: embedded manifest lacks {runtime_key!r}"
+    assert blob["version"] == MANIFEST_VERSION
+
+    m = load_manifest_from_dict(blob)
+    assert compute_manifest_consistency(m) is True
+    assert m.merkle_root.hex() == vec["merkle_root"]
+    assert [leaf.hex() for leaf in m.leaves] == vec["leaf_hashes"]
+    assert [leaf.event_id for leaf in m.leaves] == [row["event_id"] for row in vec["leaves"]]
+    assert m.envelope == "" and m.hour is None  # the pinned constraint
+    assert m.raw["version"] == MANIFEST_VERSION
+    assert m.raw["hour_slot"] == blob["hour_slot"]
+    assert len(m.leaves) == blob["event_count"]
+    for doc in vec["proofs"]:
+        assert doc["hour"] == blob["hour_slot"]
+        assert m.find_leaf(doc["event_id"]) == doc["leaf_index"]
 
 
 def test_real_runtime_manifest_from_demo_proof_loads_under_the_pin() -> None:

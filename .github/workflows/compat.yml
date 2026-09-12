@@ -94,54 +94,27 @@ jobs:
           echo "make demo-proof exit code: $rc"
           test "$rc" -eq 0
 
-      - name: Validate demo report (external_verify must be ok)
+      - name: Validate demo report (runtime validator, external_verify must be ok)
         env:
           REPORT: ${{ runner.temp }}/demo/demo-report.json
           RUNTIME_SHA: ${{ steps.clones.outputs.runtime_sha }}
           RUNTIME_VALIDATOR: ${{ runner.temp }}/runtime/scripts/ci/validate_demo_proof_report.py
         run: |
           set -euo pipefail
-          if [ -f "$RUNTIME_VALIDATOR" ]; then
-            echo "::notice title=compat validator::using runtime validator $RUNTIME_VALIDATOR (W3)"
-            # The runtime validator pins commits.wakir_runtime to GITHUB_SHA;
-            # in this repository GITHUB_SHA is the verify commit, so hand it
-            # the runtime clone's HEAD instead.
-            GITHUB_SHA="$RUNTIME_SHA" python "$RUNTIME_VALIDATOR" "$REPORT" --require-external-verify-ok
-          else
-            echo "::notice title=compat validator::FALLBACK minimal stdlib check — runtime validator (W3) not on runtime@main yet"
-            python - "$REPORT" "$RUNTIME_SHA" <<'PY'
-          import json, sys
-          report_path, runtime_sha = sys.argv[1], sys.argv[2]
-          r = json.load(open(report_path, encoding="utf-8"))
-          want = ["protocol_event", "runtime_bridge", "merkle_manifest", "inclusion_proof", "external_verify"]
-          errors = []
-          if r.get("schema") != "wakir-demo-proof/v1":
-              errors.append(f"schema {r.get('schema')!r}")
-          names = [s.get("name") for s in r.get("steps", [])]
-          if names != want:
-              errors.append(f"steps {names!r} != {want!r}")
-          for s in r.get("steps", []):
-              if s.get("status") != "ok":
-                  errors.append(f"step {s.get('name')} status {s.get('status')!r} details={s.get('details')!r}")
-          if r.get("exit_code") != 0:
-              errors.append(f"exit_code {r.get('exit_code')!r}")
-          got_rt = (r.get("commits") or {}).get("wakir_runtime")
-          if got_rt != runtime_sha:
-              errors.append(f"commits.wakir_runtime {got_rt!r} != cloned runtime@main {runtime_sha!r}")
-          ev = next((s for s in r.get("steps", []) if s.get("name") == "external_verify"), {})
-          det = ev.get("details") or {}
-          for key in ("manifest_consistent", "root_match", "leaf_present", "proof_verified"):
-              if det.get(key) is not True:
-                  errors.append(f"external_verify.details.{key} = {det.get(key)!r}")
-          if det.get("mode") != "library":
-              errors.append(f"external_verify.details.mode = {det.get('mode')!r}")
-          print("fallback check: external_verify =", ev.get("status"), "details =", json.dumps(det, sort_keys=True))
-          if errors:
-              print("FAIL:\n  - " + "\n  - ".join(errors))
-              sys.exit(1)
-          print("fallback check: OK (schema, 5 steps in order, all ok, runtime commit pinned)")
-          PY
+          # scripts/ci/validate_demo_proof_report.py is on runtime@main since
+          # ADR-0072 W3. A missing validator is drift on the runtime side and
+          # fails this gate; the pre-W3 stdlib fallback has been removed.
+          if [ ! -f "$RUNTIME_VALIDATOR" ]; then
+            echo "::error title=compat validator::runtime validator missing at $RUNTIME_VALIDATOR (runtime@main=$RUNTIME_SHA)"
+            exit 1
           fi
+          echo "::notice title=compat validator::using runtime validator scripts/ci/validate_demo_proof_report.py from runtime@main=$RUNTIME_SHA (W3)"
+          # The validator pins commits.wakir_runtime to --expect-commit (or
+          # GITHUB_SHA, which here would be the verify commit) — hand it the
+          # runtime clone's HEAD explicitly.
+          python "$RUNTIME_VALIDATOR" "$REPORT" \
+            --require-external-verify-ok \
+            --expect-commit "$RUNTIME_SHA"
 
       - name: Proof-path vector tests (hermetic + protocol@main) and loader pin
         env:
