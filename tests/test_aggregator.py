@@ -24,10 +24,11 @@ from wakir_verify import (
 
 from tests.fixtures import (
     BLOCK_HASH_948183,
-    RECEIPT_948183_BYTES,
+    build_ots_receipt,
     make_http_transport,
     make_ots_runner,
     make_proof_reader,
+    receipt_file_digest,
 )
 
 
@@ -40,9 +41,25 @@ WRONG_ANCHOR_HEX = "deadbeef" * 8  # 64 hex chars, structurally valid
 # ---------------------------------------------------------------------------
 
 
-def _write_receipt(tmp_path, blob: bytes = RECEIPT_948183_BYTES):
+def _real_receipt(anchor_hex: str = ANCHOR_HEX, height: int = 948183) -> bytes:
+    """A genuine OTS receipt for *anchor_hex* attesting *height*.
+
+    Was ``RECEIPT_948183_BYTES``: the magic header plus the literal
+    text ``BitcoinBlockHeaderAttestation(948183)``. That fixture is not
+    a timestamp proof, and the poles that accepted it accepted it for
+    any anchor — the R3 defect. It now lives in ``tests/fixtures.py``
+    as ``NON_PROOF_TEXT_BYTES`` and is exercised as a negative control
+    in ``tests/test_negative_matrix.py``.
+    """
+    return build_ots_receipt(
+        file_digest=receipt_file_digest(anchor_hex),
+        branches=[{"ops": [], "attestation": ("bitcoin", height)}],
+    )
+
+
+def _write_receipt(tmp_path, blob: bytes | None = None):
     p = tmp_path / "root.bin.ots"
-    p.write_bytes(blob)
+    p.write_bytes(_real_receipt() if blob is None else blob)
     return p
 
 
@@ -92,11 +109,24 @@ def test_tv_ev_1_known_good_anchor_default_quorum(tmp_path):
     )
     assert isinstance(result, AnchorVerification)
     assert result.quorum is True
+    assert result.overall_status == "verified"
     assert result.quorum_policy == QuorumPolicy.THREE_OF_FOUR
     assert all(pr.ok for pr in result.pole_results.values()), result.to_dict()
-    assert all(
-        pr.verdict == "verified" for pr in result.pole_results.values()
-    ), result.to_dict()
+    # Expectation changed with the R3 fix: a pole that asked an
+    # endpoint about a block height no longer reports the same word as
+    # a pole that tied this root to a Bitcoin attestation. The two
+    # mandatory poles say "verified"; the two observers say
+    # "block_observed" and are no longer able to carry a verdict alone.
+    assert result.mandatory_verified_by == (
+        "pole_python_stdlib",
+        "pole_ots_cli",
+    )
+    assert [pr.verdict for pr in result.pole_results.values()] == [
+        "verified",
+        "verified",
+        "block_observed",
+        "block_observed",
+    ], result.to_dict()
 
 
 def test_tv_ev_1_known_good_anchor_strict_all_policy(tmp_path):
@@ -111,9 +141,11 @@ def test_tv_ev_1_known_good_anchor_strict_all_policy(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# TV-EV-2: tampered anchor hash — proof_reader rejects, HTTP poles still
-# observe the canonical block hash (which is height-keyed, not
-# anchor-keyed) — quorum must still fail because pole 1 + pole 2 reject.
+# TV-EV-2: tampered anchor hash — the mandatory pole rejects, the HTTP
+# poles still observe the canonical block hash (which is height-keyed,
+# not anchor-keyed). Before the R3 fix the three ok votes outvoted the
+# rejection and this case *passed* the default quorum; the test said so
+# in as many words. It now fails, which is the point of the change.
 # ---------------------------------------------------------------------------
 
 
@@ -132,18 +164,22 @@ def test_tv_ev_2_tampered_anchor_fails_quorum(tmp_path):
     )
     assert result.pole_results["pole_python_stdlib"].ok is False
     assert result.pole_results["pole_python_stdlib"].verdict == "failed"
-    # ots-cli pole sees the right height -> ok=True (it does not check
-    # the merkle root, that's the structural pole's job).
+    # The ots-cli runner is injected with a success return code, so
+    # that pole reports verified; it is checking what the injected
+    # runner was told to say, not the anchor.
     assert result.pole_results["pole_ots_cli"].ok is True
     # HTTP poles check expected_block_hash, which is still BLOCK_HASH_948183
     # for height 948183 -> ok=True.
     assert result.pole_results["pole_mempool_space"].ok is True
     assert result.pole_results["pole_esplora_blockstream"].ok is True
-    # 3-of-4 quorum: three poles still ok, but the structural-hash
-    # pole flagged a tamper. Under default policy this passes quorum
-    # but the operator-visible AnchorVerification surfaces the
-    # disagreement.
-    assert result.quorum is True  # 3/4 ok
+    # Expectation changed with the R3 fix. Three ok votes are present
+    # and the supporting threshold is met — and it no longer matters,
+    # because a pole reported a contradiction. A verifier that saw a
+    # tamper signal and still returned a positive verdict was the
+    # defect, not a tolerance.
+    assert result.supporting_quorum is True
+    assert result.overall_status == "failed"
+    assert result.quorum is False
     # Under ALL policy the same call must fail:
     strict = verify_wat_anchor(
         anchor_hash=WRONG_ANCHOR_HEX,

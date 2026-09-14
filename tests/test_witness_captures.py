@@ -194,9 +194,19 @@ def test_tv_wc_1_live_capture_quorum_pass(tmp_path):
     )
     assert isinstance(result, AnchorVerification)
     assert result.quorum is True
+    assert result.overall_status == "verified"
     for name, pr in result.pole_results.items():
         assert pr.ok is True, f"{name} did not verify: {pr.note}"
-        assert pr.verdict == "verified", (name, pr.verdict)
+    # Expectation changed with the R3 fix: the two HTTP poles report
+    # what they observed about a block, which is not the same word as
+    # a root-bound verification and must no longer read as one.
+    assert result.mandatory_verified_by == (
+        "pole_python_stdlib",
+        "pole_ots_cli",
+    )
+    assert result.pole_results["pole_mempool_space"].verdict == (
+        "block_observed"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +233,7 @@ def test_tv_wc_2_live_capture_strict_all_policy_passes(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_tv_wc_3_mock_divergence_passes_default_quorum_fails_strict(tmp_path):
+def test_tv_wc_3_mock_divergence_fails_under_every_policy(tmp_path):
     captured = _load_capture(MOCK_DIVERGENCE_CAPTURE)
     receipt = _write_receipt(tmp_path)
     overrides = _overrides_from_capture(captured)
@@ -237,9 +247,14 @@ def test_tv_wc_3_mock_divergence_passes_default_quorum_fails_strict(tmp_path):
     # blockstream-canonical hash -> mempool flips to failed.
     assert default.pole_results["pole_mempool_space"].ok is False
     assert default.pole_results["pole_mempool_space"].verdict == "failed"
-    # Three poles still ok -> 3-of-4 quorum passes (with visible
-    # divergence surfaced in pole_results).
-    assert default.quorum is True
+    # Expectation changed with the R3 fix. This fixture is a witness
+    # that was deliberately tampered with, and the old contract let
+    # three ok votes carry it to a positive quorum anyway — the test
+    # name still says "passes default quorum". A verifier that has
+    # been handed a divergent witness reports the divergence.
+    assert default.supporting_quorum is True
+    assert default.overall_status == "failed"
+    assert default.quorum is False
 
     strict = verify_wat_anchor(
         anchor_hash=ANCHOR_HEX,
