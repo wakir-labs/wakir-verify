@@ -288,12 +288,18 @@ def summarise_discrepancies(
       Quorum may still pass under 3-of-4. Audit-note severity.
     * ``"substance"`` — two or more ``ok`` poles disagree on the
       observed block hash at the same height, or one pole reports
-      ``failed`` while others report ``verified``. Auditor must
+      ``failed`` while others report positively. Auditor must
       examine.
     * ``"brand-critical"`` — two or more poles flip to ``failed``
-      while the rest of the poles still vote ``verified``. The
-      4-pole cross-library claim is materially weakened; this is
-      the marker the brand-proof contract calls out.
+      while the rest still report positively. The 4-pole
+      cross-library claim is materially weakened; this is the marker
+      the brand-proof contract calls out.
+
+    This summary is diagnostic detail, not the verdict. Any
+    ``failed`` pole already sinks ``overall_status``; the severity
+    grading exists so an auditor can tell a one-endpoint hiccup from
+    a systematic divergence, not so a caller can decide how much
+    disagreement to tolerate.
 
     Returns a dict (not a dataclass — additive, no schema-break to
     :class:`AnchorVerification`). Callers can attach this to an

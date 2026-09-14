@@ -504,3 +504,91 @@ def test_cli_refuses_to_choose_between_two_roots(tmp_path):
     with pytest.raises(SystemExit) as excinfo:
         cli_main(["--manifest", str(manifest_path), "--anchor", ANCHOR_A])
     assert excinfo.value.code == 2
+
+
+def test_cli_offline_verification_with_a_block_header_can_reach_verified(
+    tmp_path, capsys
+):
+    """The honest positive path must actually be reachable.
+
+    A verifier that can never say yes is as useless as one that always
+    does, and it trains operators to ignore it. With a real receipt, a
+    manifest, payload bytes and a block header from the operator's own
+    node, every claim is answerable and the run exits 0 — without any
+    HTTP pole having voted, because block observations were never what
+    established the root.
+    """
+    import hashlib
+
+    from wakir_verify.cli import main as cli_main
+    from wakir_verify.merkle_proof import _canonicalise
+    from tests.fixtures import attested_message, block_merkle_root_display
+
+    payload = {"action": "approve", "amount": 10}
+    payload_hash = hashlib.sha256(_canonicalise(payload)).hexdigest()
+
+    data = _manifest_dict()
+    for row in (data["leaves"][0],):
+        row["payload_hash"] = payload_hash
+        row["leaf_hash"] = compute_leaf_hash(
+            row["event_id"],
+            row["time"],
+            payload_hash,
+            row["capability_token_hash"],
+        ).hex()
+    from wakir_verify.merkle_proof import root_hash
+
+    data["merkle_root"] = root_hash(
+        [bytes.fromhex(e["leaf_hash"]) for e in data["leaves"]]
+    ).hex()
+    data["events"] = data["leaves"]
+
+    anchor = data["merkle_root"]
+    ops = [("append", b"\x42" * 8), ("sha256",)]
+    receipt = tmp_path / "root.bin.ots"
+    receipt.write_bytes(
+        build_ots_receipt(
+            file_digest=receipt_file_digest(anchor),
+            branches=[{"ops": ops, "attestation": ("bitcoin", HEIGHT)}],
+        )
+    )
+    header_root = block_merkle_root_display(
+        attested_message(receipt_file_digest(anchor), ops)
+    )
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(data))
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text(
+        "\n".join(json.dumps(e) for e in data["events"]) + "\n"
+    )
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_text(json.dumps(payload))
+    proof_path = tmp_path / "proof.json"
+    proof_path.write_text(json.dumps(_proof_for(data, 0)))
+
+    rc = cli_main(
+        [
+            "--manifest", str(manifest_path),
+            "--events", str(events_path),
+            "--proof", str(proof_path),
+            "--event-id", "evt-0000",
+            "--payload", f"evt-0000={payload_path}",
+            "--ots-proof", str(receipt),
+            "--skip-pole", "pole_ots_cli",
+            "--skip-pole", "pole_mempool_space",
+            "--skip-pole", "pole_esplora_blockstream",
+            "--block-merkle-root", f"{HEIGHT}={header_root}",
+        ]
+    )
+    body = json.loads(capsys.readouterr().out)
+
+    assert rc == 0, body
+    assert body["overall_status"] == "verified"
+    assert all(c["status"] == STATUS_OK for c in body["claims"])
+    claim = next(
+        c for c in body["claims"] if c["claim"] == "root_authenticity"
+    )
+    assert claim["evidence"]["mandatory_verified_by"] == ["pole_python_stdlib"]
+    assert claim["evidence"]["supporting_quorum"] is False
+    assert "rests on the mandatory check alone" in claim["summary"]

@@ -587,37 +587,50 @@ def _run_anchor_poles(
 
 
 def _root_authenticity_claim(verification: AnchorVerification) -> Claim:
-    """Translate the pole run into the one claim it speaks to."""
-    status_map = {
-        "verified": STATUS_OK,
-        "failed": STATUS_FAILED,
-        "not_checked": STATUS_NOT_CHECKED,
-    }
-    status = status_map.get(verification.overall_status, STATUS_NOT_CHECKED)
+    """Translate the pole run into the one claim it speaks to.
 
+    The claim asks whether a complete, root-bound timestamp proof puts
+    this root in the Bitcoin chain. That is answered by the mandatory
+    poles: either one of them walked the proof and tied the root to an
+    attestation, or none did. The supporting quorum is corroboration
+    of a different question — what independent operators observe about
+    a block — and it is reported as evidence here rather than folded
+    into the answer. Folding weaker questions into a stronger one's
+    answer is the shape of the defect this branch fixes; doing it in
+    the other direction would be the same mistake with better
+    manners.
+
+    ``AnchorVerification.quorum`` keeps requiring both, so a library
+    caller reading that field gets the stricter of the two readings.
+    """
     failed = [
         name
         for name, pr in verification.pole_results.items()
         if pr.verdict == "failed"
     ]
-    if status == STATUS_FAILED:
+
+    if failed:
+        status = STATUS_FAILED
         summary = (
             "the root is not authenticated by this receipt: "
             + "; ".join(
                 verification.pole_results[name].note or name for name in failed
             )
         )
-    elif status == STATUS_OK:
+    elif verification.mandatory_verified_by:
+        status = STATUS_OK
         summary = (
             "a root-bound timestamp verification ties this root to Bitcoin "
             f"({', '.join(verification.mandatory_verified_by)})"
         )
-    elif verification.mandatory_verified_by:
-        summary = (
-            "a mandatory pole bound the root, but the supporting quorum was "
-            f"not reached under policy {verification.quorum_policy.value}"
-        )
+        if not verification.supporting_quorum:
+            summary += (
+                "; the supporting block observations did not reach the "
+                f"{verification.quorum_policy.value} threshold, so this rests "
+                "on the mandatory check alone"
+            )
     else:
+        status = STATUS_NOT_CHECKED
         summary = (
             "no pole performed a root-bound Bitcoin verification; block "
             "observations and structural checks cannot stand in for one"
@@ -631,6 +644,7 @@ def _root_authenticity_claim(verification: AnchorVerification) -> Claim:
             "quorum_policy": verification.quorum_policy.value,
             "mandatory_verified_by": list(verification.mandatory_verified_by),
             "supporting_quorum": verification.supporting_quorum,
+            "aggregate_quorum": verification.quorum,
             "pole_verdicts": {
                 name: pr.verdict
                 for name, pr in verification.pole_results.items()
