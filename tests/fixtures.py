@@ -38,7 +38,8 @@ Test-vectors materialise the Position-Paper §L4 claims:
 from __future__ import annotations
 
 import dataclasses
-from typing import Callable
+import hashlib
+from typing import Any, Callable, Mapping, Sequence
 
 from wakir_verify.poles import HttpResponse
 
@@ -47,20 +48,139 @@ from wakir_verify.poles import HttpResponse
 # OTS receipt blobs
 # ---------------------------------------------------------------------------
 
-#: Minimal OTS-magic-bytes header. Sufficient for the structural
-#: pole's positive path; the rest of a real receipt is a binary
-#: proof tree we do not need to reproduce for unit tests.
+#: The 31-byte magic header every OTS detached-timestamp file starts
+#: with.
 _OTS_MAGIC = b"\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94"
 
-#: A receipt that names block height 948183 in its info-text form
-#: (the structural pole regexes against the decoded bytes).
-RECEIPT_948183_BYTES = (
+#: Notary tags, per python-opentimestamps.
+_TAG_BITCOIN = b"\x05\x88\x96\x0d\x73\xd7\x19\x01"
+_TAG_PENDING = b"\x83\xdf\xe3\x0d\x2e\xf9\x0c\x8e"
+
+
+def _varuint(value: int) -> bytes:
+    """Base-128 little-endian varint, as the OTS format writes it."""
+    out = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(byte | 0x80)
+        else:
+            out.append(byte)
+            return bytes(out)
+
+
+def _varbytes(payload: bytes) -> bytes:
+    return _varuint(len(payload)) + payload
+
+
+def _apply_ops(message: bytes, ops: Sequence[tuple]) -> bytes:
+    """Mirror of the reader's op semantics, for computing expectations."""
+    for op in ops:
+        kind = op[0]
+        if kind == "append":
+            message = message + op[1]
+        elif kind == "prepend":
+            message = op[1] + message
+        elif kind == "sha256":
+            message = hashlib.sha256(message).digest()
+        else:  # pragma: no cover - fixture author error
+            raise ValueError(f"unsupported fixture op {kind!r}")
+    return message
+
+
+def _serialise_ops(ops: Sequence[tuple]) -> bytes:
+    out = b""
+    for op in ops:
+        kind = op[0]
+        if kind == "append":
+            out += b"\xf0" + _varbytes(op[1])
+        elif kind == "prepend":
+            out += b"\xf1" + _varbytes(op[1])
+        elif kind == "sha256":
+            out += b"\x08"
+        else:  # pragma: no cover - fixture author error
+            raise ValueError(f"unsupported fixture op {kind!r}")
+    return out
+
+
+def build_ots_receipt(
+    *,
+    file_digest: bytes,
+    branches: Sequence[Mapping[str, Any]],
+) -> bytes:
+    """Serialise a genuine OTS detached-timestamp file.
+
+    The suite used to stand in for a receipt with the magic header
+    followed by the *text* ``BitcoinBlockHeaderAttestation(948183)``.
+    That is not a receipt, and the external re-review of 2026-09-14
+    used exactly that shape to walk a non-proof through to a positive
+    quorum. Building the real byte format costs about thirty lines and
+    removes the class of test that passes because the verifier is not
+    looking.
+
+    ``branches`` is a sequence of ``{"ops": [...], "attestation":
+    ("bitcoin", height) | ("pending", uri)}``. ``ops`` entries are
+    ``("append", b"..")``, ``("prepend", b"..")`` or ``("sha256",)``
+    and are applied to the running message before the attestation, so
+    a fixture can produce an attestation message that is not simply
+    the file digest — which is what a real calendar path looks like.
+    """
+    body = b""
+    for idx, branch in enumerate(branches):
+        last = idx == len(branches) - 1
+        if not last:
+            body += b"\xff"
+        body += _serialise_ops(branch.get("ops", ()))
+        kind, value = branch["attestation"]
+        if kind == "bitcoin":
+            payload = _varuint(int(value))
+            body += b"\x00" + _TAG_BITCOIN + _varbytes(payload)
+        elif kind == "pending":
+            payload = _varbytes(str(value).encode("utf-8"))
+            body += b"\x00" + _TAG_PENDING + _varbytes(payload)
+        else:  # pragma: no cover - fixture author error
+            raise ValueError(f"unsupported attestation kind {kind!r}")
+    return _OTS_MAGIC + _varuint(1) + b"\x08" + file_digest + body
+
+
+def attested_message(file_digest: bytes, ops: Sequence[tuple]) -> bytes:
+    """The running message an attestation sees, given ``ops``."""
+    return _apply_ops(file_digest, ops)
+
+
+def block_merkle_root_display(message: bytes) -> str:
+    """The attested message as an explorer would print the merkle root."""
+    return message[::-1].hex()
+
+
+def receipt_file_digest(anchor_hex: str) -> bytes:
+    """File digest a WAT receipt carries for *anchor_hex*.
+
+    WAT writes the 32-byte root to ``root.bin`` and stamps that file
+    (``wat/anchor/ots_anchor.py``), so the receipt commits to
+    SHA-256 of the root's bytes rather than to the root itself.
+    """
+    return hashlib.sha256(bytes.fromhex(anchor_hex)).digest()
+
+
+#: NOT a timestamp proof: the magic header plus the literal text a
+#: reader would print for a Bitcoin attestation. This is the external
+#: reviewer's counter-example, kept as a fixture so the negative
+#: control has a name — see ``tests/test_negative_matrix.py``. Any
+#: code path that accepts this is defective by construction.
+NON_PROOF_TEXT_BYTES = (
     _OTS_MAGIC
     + b"BitcoinBlockHeaderAttestation(948183)\n"
     + b"\x00" * 32
 )
 
-#: A receipt that names *no* block height (pending receipt).
+#: Historical name of the fixture above, when it was believed to be a
+#: usable stand-in for a receipt.
+RECEIPT_948183_BYTES = NON_PROOF_TEXT_BYTES
+
+#: NOT a timestamp proof either: magic header plus pending-attestation
+#: text.
 RECEIPT_PENDING_BYTES = _OTS_MAGIC + b"PendingAttestation(alice.calendar)\n"
 
 
@@ -156,9 +276,14 @@ def make_http_transport(
 
 __all__ = [
     "BLOCK_HASH_948183",
+    "NON_PROOF_TEXT_BYTES",
     "RECEIPT_948183_BYTES",
     "RECEIPT_PENDING_BYTES",
+    "attested_message",
+    "block_merkle_root_display",
+    "build_ots_receipt",
     "make_http_transport",
     "make_ots_runner",
     "make_proof_reader",
+    "receipt_file_digest",
 ]

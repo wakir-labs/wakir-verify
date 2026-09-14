@@ -368,8 +368,13 @@ def test_tv_det_6_discrepancy_summary_substance_contradiction(tmp_path):
         ots_proof_path=str(receipt),
         pole_overrides=overrides,
     )
-    # 3-of-4 still passes.
-    assert result.quorum is True
+    # Expectation changed with the R3 fix: the supporting threshold is
+    # still met, and a contradiction still sinks the verdict. The
+    # discrepancy summary below is what carries the detail; it was
+    # never meant to be the only place the contradiction showed up.
+    assert result.supporting_quorum is True
+    assert result.quorum is False
+    assert result.overall_status == "failed"
     mempool = result.pole_results["pole_mempool_space"]
     assert mempool.ok is False
     assert mempool.verdict == "failed"

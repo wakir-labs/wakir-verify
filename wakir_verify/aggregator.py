@@ -22,10 +22,35 @@ Each pole returns a :class:`PoleResult` with:
   pole observed (block hash, height, ``ots`` output snippet, …)
   so a human auditor can correlate verdicts across poles.
 
+The mandatory check outranks the quorum
+---------------------------------------
+
+Counting ``ok`` votes was the whole decision procedure, and it had no
+notion that the poles answer different questions. A file that was not
+a timestamp proof — magic header plus the literal text
+``BitcoinBlockHeaderAttestation(800000)`` — collected three ``ok``
+votes from poles that never looked at the root, outvoted the one pole
+that reported failure, and reached quorum. Handing the same call a
+completely different ``anchor_hash`` changed nothing.
+
+So the decision now has two stages:
+
+1. **Mandatory.** At least one pole with ``role == "mandatory"`` must
+   return a root-bound verdict (``verified``). These are the poles
+   that tie *this* anchor to a Bitcoin attestation.
+2. **Supporting.** The configured quorum threshold must additionally
+   be met, and no pole may have returned ``failed``.
+
+``overall_status`` is therefore one of ``verified``, ``failed`` or
+``not_checked``, and ``quorum`` is true only for ``verified``. An
+observation-only run — no ``ots`` binary, no block header — lands on
+``not_checked``. That is the honest answer, and it is the one an
+operator can act on; a false ``verified`` is not.
+
 Quorum
 ------
 
-Quorum is configurable:
+The quorum threshold still governs the supporting evidence:
 
 * ``QuorumPolicy.THREE_OF_FOUR`` (default) — at least three poles
   return ``ok=True``. This tolerates one transient unavailable pole.
@@ -48,7 +73,11 @@ import enum
 from typing import Any, Callable, Mapping, Optional
 
 from wakir_verify import poles as _poles
-from wakir_verify.types import PoleResult
+from wakir_verify.types import (
+    ROLE_MANDATORY,
+    PoleResult,
+    VERDICT_FAILED,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +107,19 @@ class AnchorVerification:
     quorum_policy:
         The :class:`QuorumPolicy` requested at call time.
     quorum:
-        ``True`` when the configured quorum was reached.
+        ``True`` only when ``overall_status`` is ``"verified"``: a
+        mandatory pole bound the root *and* the supporting threshold
+        was met *and* nothing failed. Reading this field as "three
+        endpoints agreed" is exactly the misreading that let a
+        non-proof pass.
+    overall_status:
+        ``"verified"``, ``"failed"`` or ``"not_checked"``.
+    mandatory_verified_by:
+        Names of the mandatory poles that produced a root-bound
+        verdict. Empty means no pole tied the anchor to Bitcoin.
+    supporting_quorum:
+        ``True`` when the raw ``ok``-count met the policy threshold.
+        Evidence, not a verdict.
     pole_results:
         Per-pole :class:`PoleResult` keyed by pole name.
     witnesses:
@@ -92,12 +133,26 @@ class AnchorVerification:
     quorum: bool
     pole_results: dict[str, PoleResult]
     witnesses: list[tuple[str, Mapping[str, Any]]]
+    overall_status: str = "not_checked"
+    mandatory_verified_by: tuple[str, ...] = ()
+    supporting_quorum: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "anchor_hash": self.anchor_hash,
             "quorum_policy": self.quorum_policy.value,
+            "overall_status": self.overall_status,
             "quorum": self.quorum,
+            "mandatory_check": {
+                "required": True,
+                "satisfied": bool(self.mandatory_verified_by),
+                "verified_by": list(self.mandatory_verified_by),
+                "contract": (
+                    "a positive verdict requires a root-bound timestamp "
+                    "verification; block observations cannot substitute"
+                ),
+            },
+            "supporting_quorum": self.supporting_quorum,
             "pole_results": {
                 name: pr.to_dict() for name, pr in self.pole_results.items()
             },
@@ -185,15 +240,26 @@ def verify_wat_anchor(
             )
         pole_results[name] = result
 
-    quorum = _evaluate_quorum(pole_results, quorum_policy)
+    supporting_quorum = _evaluate_quorum(pole_results, quorum_policy)
+    mandatory_verified_by = tuple(
+        name for name, pr in pole_results.items() if pr.is_root_bound
+    )
+    overall_status = _evaluate_overall(
+        pole_results,
+        supporting_quorum=supporting_quorum,
+        mandatory_verified_by=mandatory_verified_by,
+    )
     witnesses = [(name, pr.witness) for name, pr in pole_results.items()]
 
     return AnchorVerification(
         anchor_hash=anchor_hash,
         quorum_policy=quorum_policy,
-        quorum=quorum,
+        quorum=overall_status == "verified",
         pole_results=pole_results,
         witnesses=witnesses,
+        overall_status=overall_status,
+        mandatory_verified_by=mandatory_verified_by,
+        supporting_quorum=supporting_quorum,
     )
 
 
@@ -222,12 +288,18 @@ def summarise_discrepancies(
       Quorum may still pass under 3-of-4. Audit-note severity.
     * ``"substance"`` — two or more ``ok`` poles disagree on the
       observed block hash at the same height, or one pole reports
-      ``failed`` while others report ``verified``. Auditor must
+      ``failed`` while others report positively. Auditor must
       examine.
     * ``"brand-critical"`` — two or more poles flip to ``failed``
-      while the rest of the poles still vote ``verified``. The
-      4-pole cross-library claim is materially weakened; this is
-      the marker the brand-proof contract calls out.
+      while the rest still report positively. The 4-pole
+      cross-library claim is materially weakened; this is the marker
+      the brand-proof contract calls out.
+
+    This summary is diagnostic detail, not the verdict. Any
+    ``failed`` pole already sinks ``overall_status``; the severity
+    grading exists so an auditor can tell a one-endpoint hiccup from
+    a systematic divergence, not so a caller can decide how much
+    disagreement to tolerate.
 
     Returns a dict (not a dataclass — additive, no schema-break to
     :class:`AnchorVerification`). Callers can attach this to an
@@ -290,10 +362,39 @@ def summarise_discrepancies(
 # ---------------------------------------------------------------------------
 
 
+def _evaluate_overall(
+    pole_results: Mapping[str, PoleResult],
+    *,
+    supporting_quorum: bool,
+    mandatory_verified_by: tuple[str, ...],
+) -> str:
+    """Fold pole results into ``verified`` / ``failed`` / ``not_checked``.
+
+    Order matters. A contradiction anywhere outranks everything else,
+    because a verifier that saw a contradiction and reported a softer
+    word would be doing the thing this module exists to stop. Absent
+    a contradiction, a positive verdict needs a mandatory pole to have
+    bound the root; supporting evidence alone yields ``not_checked``.
+    """
+    if not pole_results:
+        return "not_checked"
+    if any(pr.verdict == VERDICT_FAILED for pr in pole_results.values()):
+        return "failed"
+    if mandatory_verified_by and supporting_quorum:
+        return "verified"
+    return "not_checked"
+
+
 def _evaluate_quorum(
     pole_results: Mapping[str, PoleResult],
     policy: QuorumPolicy,
 ) -> bool:
+    """Raw ``ok``-count against the policy threshold.
+
+    This is the *supporting* threshold only. It was the entire verdict
+    until the 2026-09-14 re-review; it is now one of two conditions,
+    and the weaker one.
+    """
     ok_count = sum(1 for pr in pole_results.values() if pr.ok)
     total = len(pole_results)
     if total == 0:

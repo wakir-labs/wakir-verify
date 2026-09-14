@@ -23,13 +23,34 @@ from tests.fixtures import (
     BLOCK_HASH_948183,
     RECEIPT_948183_BYTES,
     RECEIPT_PENDING_BYTES,
+    attested_message,
+    block_merkle_root_display,
+    build_ots_receipt,
     make_http_transport,
     make_ots_runner,
     make_proof_reader,
+    receipt_file_digest,
 )
 
 
 ANCHOR_HEX = "d16216b92bac7653828301b0b8b5595028a636eaf1bfd0f10d9b9a5fbd1b1894"
+
+#: One append + one sha256 before the attestation, so the attested
+#: message is not simply the file digest — as on a real calendar path.
+_BRANCH_OPS = [("append", b"\x11" * 16), ("sha256",)]
+
+
+def _receipt_bytes(anchor_hex: str = ANCHOR_HEX, height: int = 948183) -> bytes:
+    return build_ots_receipt(
+        file_digest=receipt_file_digest(anchor_hex),
+        branches=[{"ops": _BRANCH_OPS, "attestation": ("bitcoin", height)}],
+    )
+
+
+def _claimed_root(anchor_hex: str = ANCHOR_HEX) -> str:
+    return block_merkle_root_display(
+        attested_message(receipt_file_digest(anchor_hex), _BRANCH_OPS)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +58,104 @@ ANCHOR_HEX = "d16216b92bac7653828301b0b8b5595028a636eaf1bfd0f10d9b9a5fbd1b1894"
 # ---------------------------------------------------------------------------
 
 
-def test_pole_python_stdlib_structural_happy_path(tmp_path):
+def test_pole_python_stdlib_bound_receipt_without_block_header_is_not_checked(
+    tmp_path,
+):
+    """A bound receipt alone is not a Bitcoin verification.
+
+    Expectation changed with the R3 fix. This test used to feed the
+    magic header plus the text ``BitcoinBlockHeaderAttestation(948183)``
+    and assert ``verified`` — a positive verdict about a root the pole
+    never compared. The receipt is now real, the root binding is
+    checked, and the Bitcoin side stays ``not_checked`` until a block
+    header is supplied.
+    """
+    receipt = tmp_path / "r.ots"
+    receipt.write_bytes(_receipt_bytes())
+    r = p.pole_python_stdlib_verify(
+        anchor_hash=ANCHOR_HEX,
+        ots_proof_path=str(receipt),
+        expected_block_height=948183,
+    )
+    assert r.ok is False
+    assert r.verdict == "not_checked"
+    assert r.role == "mandatory"
+    assert r.witness["binding"]["bound"] is True
+    assert 948183 in r.witness["heights"]
+    assert "no block header was supplied" in r.note
+
+
+def test_pole_python_stdlib_verifies_against_supplied_block_header(tmp_path):
+    receipt = tmp_path / "r.ots"
+    receipt.write_bytes(_receipt_bytes())
+    r = p.pole_python_stdlib_verify(
+        anchor_hash=ANCHOR_HEX,
+        ots_proof_path=str(receipt),
+        expected_block_height=948183,
+        block_merkle_roots={948183: _claimed_root()},
+    )
+    assert r.ok is True
+    assert r.verdict == "verified"
+    assert r.is_root_bound is True
+
+
+def test_pole_python_stdlib_rejects_contradicting_block_header(tmp_path):
+    receipt = tmp_path / "r.ots"
+    receipt.write_bytes(_receipt_bytes())
+    r = p.pole_python_stdlib_verify(
+        anchor_hash=ANCHOR_HEX,
+        ots_proof_path=str(receipt),
+        expected_block_height=948183,
+        block_merkle_roots={948183: "0" * 64},
+    )
+    assert r.ok is False
+    assert r.verdict == "failed"
+
+
+def test_pole_python_stdlib_pending_only_receipt_is_structural_ok(tmp_path):
+    """A pending receipt is un-upgraded, not wrong.
+
+    Expectation changed with the R3 fix: ``failed`` conflated "this
+    timestamp has not reached Bitcoin yet" with "this timestamp is
+    bad". The receipt is bound to the root and honest about carrying
+    only calendar attestations, so the verdict is ``structural_ok``
+    and the overall run cannot turn positive on it.
+    """
+    receipt = tmp_path / "r.ots"
+    receipt.write_bytes(
+        build_ots_receipt(
+            file_digest=receipt_file_digest(ANCHOR_HEX),
+            branches=[
+                {
+                    "ops": [],
+                    "attestation": ("pending", "https://alice.calendar.test"),
+                }
+            ],
+        )
+    )
+    r = p.pole_python_stdlib_verify(
+        anchor_hash=ANCHOR_HEX,
+        ots_proof_path=str(receipt),
+    )
+    assert r.ok is False
+    assert r.verdict == "structural_ok"
+    assert "no Bitcoin attestation" in r.note
+
+
+def test_pole_python_stdlib_rejects_receipt_for_a_different_root(tmp_path):
+    receipt = tmp_path / "r.ots"
+    receipt.write_bytes(_receipt_bytes())
+    r = p.pole_python_stdlib_verify(
+        anchor_hash="b" * 64,
+        ots_proof_path=str(receipt),
+    )
+    assert r.ok is False
+    assert r.verdict == "failed"
+    assert "does not attest this root" in r.note
+
+
+def test_pole_python_stdlib_rejects_text_shaped_non_proof(tmp_path):
+    """The reviewer's counter-example, at the pole level."""
     receipt = tmp_path / "r.ots"
     receipt.write_bytes(RECEIPT_948183_BYTES)
     r = p.pole_python_stdlib_verify(
@@ -45,12 +163,11 @@ def test_pole_python_stdlib_structural_happy_path(tmp_path):
         ots_proof_path=str(receipt),
         expected_block_height=948183,
     )
-    assert r.ok is True
-    assert r.verdict == "verified"
-    assert 948183 in r.witness["heights"]
+    assert r.ok is False
+    assert r.verdict == "failed"
 
 
-def test_pole_python_stdlib_structural_no_height_in_pending_receipt(tmp_path):
+def test_pole_python_stdlib_rejects_pending_text_shaped_non_proof(tmp_path):
     receipt = tmp_path / "r.ots"
     receipt.write_bytes(RECEIPT_PENDING_BYTES)
     r = p.pole_python_stdlib_verify(
@@ -60,7 +177,7 @@ def test_pole_python_stdlib_structural_no_height_in_pending_receipt(tmp_path):
     )
     assert r.ok is False
     assert r.verdict == "failed"
-    assert "no BitcoinBlockHeaderAttestation" in r.note
+    assert "not a readable OpenTimestamps receipt" in r.note
 
 
 def test_pole_python_stdlib_missing_file_is_unavailable(tmp_path):
@@ -158,7 +275,7 @@ def test_pole_ots_cli_happy_path(tmp_path):
 
 def test_pole_ots_cli_nonzero_returncode_is_failed(tmp_path):
     receipt = tmp_path / "r.ots"
-    receipt.write_bytes(RECEIPT_948183_BYTES)
+    receipt.write_bytes(_receipt_bytes())
     runner = make_ots_runner(
         stdout="error: malformed receipt", returncode=1
     )
@@ -168,12 +285,88 @@ def test_pole_ots_cli_nonzero_returncode_is_failed(tmp_path):
         ots_runner=runner,
     )
     assert r.ok is False
-    assert "returncode=1" in r.note
+    assert r.verdict == "failed"
+    # Note wording changed with the R3 fix: the pole now names the
+    # subcommand it ran, because which one it ran was the defect.
+    assert "ots verify rejected the timestamp (returncode 1)" in r.note
+
+
+def test_pole_ots_cli_unavailable_marker_is_not_a_failure(tmp_path):
+    """"Could not check" and "checked and wrong" are different answers.
+
+    Upstream exits 1 both when a timestamp is bad and when it cannot
+    reach a Bitcoin node. Reporting the second as ``failed`` would make
+    every node-less host look like a tamper alarm; reporting it as
+    ``verified`` would be the R3 defect again. It is ``unavailable``.
+    """
+    receipt = tmp_path / "r.ots"
+    receipt.write_bytes(_receipt_bytes())
+    runner = make_ots_runner(
+        stdout="Could not connect to Bitcoin node: Cookie file unusable",
+        returncode=1,
+    )
+    r = p.pole_ots_cli_verify(
+        anchor_hash=ANCHOR_HEX,
+        ots_proof_path=str(receipt),
+        ots_runner=runner,
+    )
+    assert r.ok is False
+    assert r.verdict == "unavailable"
+
+
+def test_pole_ots_cli_digest_mismatch_retries_then_fails(tmp_path):
+    """Both accepted bindings are offered before the pole gives up."""
+    seen: list[list[str]] = []
+
+    def runner(argv):
+        seen.append(list(argv))
+
+        class _CP:
+            stdout = ""
+            stderr = (
+                "Digest provided does not match digest in timestamp, "
+                "aaaa (sha256)"
+            )
+            returncode = 1
+
+        return _CP()
+
+    receipt = tmp_path / "r.ots"
+    receipt.write_bytes(_receipt_bytes())
+    r = p.pole_ots_cli_verify(
+        anchor_hash=ANCHOR_HEX,
+        ots_proof_path=str(receipt),
+        ots_runner=runner,
+    )
+    assert r.ok is False
+    assert r.verdict == "failed"
+    assert len(seen) == 2, seen
+    assert seen[0][1] == "verify" and seen[0][2] == "-d"
+    assert seen[0][3] != seen[1][3]
+
+
+def test_pole_ots_cli_info_mode_is_supporting_and_never_verified(tmp_path):
+    """``ots info`` displays a timestamp; it does not verify one."""
+    receipt = tmp_path / "r.ots"
+    receipt.write_bytes(_receipt_bytes())
+    runner = make_ots_runner(
+        stdout="BitcoinBlockHeaderAttestation(948183)\n",
+    )
+    r = p.pole_ots_cli_verify(
+        anchor_hash=ANCHOR_HEX,
+        ots_proof_path=str(receipt),
+        ots_runner=runner,
+        mode=p.OTS_MODE_INFO,
+    )
+    assert r.ok is True
+    assert r.verdict == "structural_ok"
+    assert r.role == "supporting"
+    assert r.is_root_bound is False
 
 
 def test_pole_ots_cli_height_mismatch(tmp_path):
     receipt = tmp_path / "r.ots"
-    receipt.write_bytes(RECEIPT_948183_BYTES)
+    receipt.write_bytes(_receipt_bytes())
     runner = make_ots_runner(
         stdout="BitcoinBlockHeaderAttestation(948183)\n",
     )
@@ -182,6 +375,7 @@ def test_pole_ots_cli_height_mismatch(tmp_path):
         ots_proof_path=str(receipt),
         expected_block_height=999_999,
         ots_runner=runner,
+        mode=p.OTS_MODE_INFO,
     )
     assert r.ok is False
     assert "expected height" in r.note
@@ -189,7 +383,7 @@ def test_pole_ots_cli_height_mismatch(tmp_path):
 
 def test_pole_ots_cli_missing_binary_is_unavailable(tmp_path):
     receipt = tmp_path / "r.ots"
-    receipt.write_bytes(RECEIPT_948183_BYTES)
+    receipt.write_bytes(_receipt_bytes())
     # Don't inject a runner -> real shutil.which path. Use an
     # unambiguously-absent binary name so the test does not depend
     # on host PATH.

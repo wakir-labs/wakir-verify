@@ -86,27 +86,65 @@ wakir-verify --help
 A minimal round-trip:
 
 ```bash
-# 1. Read the anchor your runtime committed.
-ANCHOR=$(jq -r .merkle_root manifest.json)
-
-# 2. Run the verifier against the matching .ots receipt.
 wakir-verify \
-    --anchor "$ANCHOR" \
-    --ots-proof anchor.bin.ots
-
-# 3. Exit code is the verdict.
-#    0 = quorum reached, anchor attested on Bitcoin.
-#    1 = quorum not reached, audit failure.
-#    2 = CLI usage error.
+    --manifest manifest.json \
+    --ots-proof root.bin.ots
 ```
 
-JSON output by default. Pipe to `jq` for scripting. For human-
-readable output:
+`--anchor` is optional when `--manifest` is given; the manifest's own
+root is used, and disagreeing with an explicit `--anchor` is an error
+rather than a silent choice between the two.
+
+### What the verifier claims, and what it does not
+
+The output is four separate statements. They are reported separately
+because they are separately true, and because the weakest of them used
+to set the tone for all four:
+
+| Claim | Question |
+|---|---|
+| `hashlist_consistency` | Do the manifest's stored leaf hashes fold to its stored root? |
+| `event_binding` | Do the recorded event fields re-derive those leaf hashes? |
+| `payload_check` | Do supplied payload bytes hash to the committed `payload_hash`? |
+| `root_authenticity` | Is the root bound into the Bitcoin chain by a complete timestamp proof? |
+
+Each is `ok`, `failed`, or `not_checked`. **`not_checked` is never a
+synonym for `ok`.** An honestly disabled time proof is an acceptable
+outcome; a false positive is not.
+
+To strengthen a claim, give the verifier more:
+
+```bash
+wakir-verify \
+    --manifest manifest.json \
+    --events hour-spool.jsonl \        # binds leaves to records from outside the manifest
+    --proof inclusion-proof.json \     # binds the proof to this manifest and this event
+    --event-id evt-0001 \
+    --payload evt-0001=payload.json \  # checks the payload against its commitment
+    --ots-proof root.bin.ots \
+    --expected-block-height 948254 \
+    --block-merkle-root 948254=<merkleroot-from-your-node>
+```
+
+Exit codes:
+
+```
+0 = every claim the run made is ok
+1 = at least one claim failed (checked and contradicted)
+2 = CLI usage error
+4 = nothing failed, but something was not checked
+```
+
+`4` exists because "I could not check" and "I checked and it is wrong"
+are different messages to an operator. Both are non-zero.
+
+JSON output by default (`wakir-verification-report/v1`). Pipe to `jq`
+for scripting. For human-readable output:
 
 ```bash
 wakir-verify --output-format text \
-    --anchor "$ANCHOR" \
-    --ots-proof anchor.bin.ots
+    --manifest manifest.json \
+    --ots-proof root.bin.ots
 ```
 
 ## Architecture
@@ -120,27 +158,38 @@ alone Bitcoin block-header verifier:
 2. **Merkle layer** (`wakir_verify.merkle_proof`) — recomputes an
    inclusion proof from leaves, verifies a proof against a root,
    independent of how the manifest was produced.
-3. **OpenTimestamps layer** (`wakir_verify.ots_verify`,
-   `wakir_verify.aggregator`) — parses the `.ots` receipt and walks
-   it to a Bitcoin block-header attestation.
+3. **OpenTimestamps layer** (`wakir_verify.ots_proof`,
+   `wakir_verify.ots_verify`, `wakir_verify.aggregator`) — walks the
+   `.ots` proof tree to its attestations, checks that the receipt was
+   made for the root in question, and produces the `(height, block
+   merkle root)` claim each Bitcoin attestation makes.
 4. **Bitcoin-header standalone verify** (`wakir_verify.bitcoin_header`) —
    given a height, hash, and header bytes, checks the proof-of-work
    on the header itself, without trusting any third-party API to
    speak truth about Bitcoin.
 
-The Bitcoin-anchor pole is cross-checked through **four independent
-verification poles** to defeat single-source bias:
+The Bitcoin-anchor path runs **four independent poles** to defeat
+single-source bias. They are not interchangeable votes: two of them
+can tie an anchor to a Bitcoin attestation, two cannot.
 
-1. **Pole 1** — Python stdlib OpenTimestamps receipt parser
-   (offline, no network).
-2. **Pole 2** — Upstream `ots` CLI from the OpenTimestamps reference
-   implementation.
-3. **Pole 3** — `mempool.space` REST API cross-check.
-4. **Pole 4** — `blockstream.info` Esplora REST API cross-check.
+| Pole | Role | What it does |
+|---|---|---|
+| 1 — Python stdlib OTS walk | mandatory | Walks the receipt offline, checks it was made for this root, checks the attestation against a block header you supply |
+| 2 — upstream `ots verify -d` | mandatory | Runs the subcommand that verifies, not the one that displays |
+| 3 — `mempool.space` REST | supporting | Reports the block hash it observes at a height |
+| 4 — `blockstream.info` Esplora REST | supporting | Same question, different operator |
 
-Default quorum is **3-of-4**: a single pole failing because of a
-transient HTTP 503 or rate limit does not flip the verdict, but a
-fundamental disagreement does. Pass `--pols all` for strict mode.
+A positive verdict requires **a mandatory pole to have bound the
+root**, *and* the quorum threshold (default 3-of-4, `--pols all` for
+strict) to be met, *and* no pole to have reported a contradiction.
+Block observations are evidence about the chain; they say nothing
+about your anchor and can no longer carry a verdict on their own.
+
+Pole 1 cannot confirm the Bitcoin side without a block header — that
+data is not in the receipt. Pass `--block-merkle-root HEIGHT=HEX` from
+your own node. Without it the pole reports `not_checked` and prints
+the claim so you can check it by hand, the same courtesy upstream
+`ots verify` extends when Bitcoin is disabled.
 
 ## Substance anchors
 
@@ -179,8 +228,27 @@ result: AnchorVerification = verify_wat_anchor(
     quorum_policy=QuorumPolicy.THREE_OF_FOUR,
 )
 
-if result.quorum.passed:
+result.overall_status        # "verified" | "failed" | "not_checked"
+result.mandatory_verified_by # poles that bound the root; () means none
+result.supporting_quorum     # raw ok-count vs threshold: evidence, not a verdict
+
+if result.quorum:            # True only when overall_status == "verified"
     ...
+```
+
+Manifest-side claims:
+
+```python
+from wakir_verify.binding import (
+    check_event_binding,
+    check_hashlist_consistency,
+    check_payload_binding,
+)
+from wakir_verify.manifest import load_manifest_from_file
+
+manifest = load_manifest_from_file("manifest.json")
+check_hashlist_consistency(manifest).status   # "ok" | "failed"
+check_event_binding(manifest).status          # recomputes leaves from B1 fields
 ```
 
 Manifest and Merkle helpers:

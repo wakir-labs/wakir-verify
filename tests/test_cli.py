@@ -20,7 +20,7 @@ import pytest
 
 from wakir_verify.cli import main as cli_main
 
-from tests.fixtures import RECEIPT_948183_BYTES
+from tests.fixtures import build_ots_receipt, receipt_file_digest
 
 
 ANCHOR_HEX = "d16216b92bac7653828301b0b8b5595028a636eaf1bfd0f10d9b9a5fbd1b1894"
@@ -28,7 +28,12 @@ ANCHOR_HEX = "d16216b92bac7653828301b0b8b5595028a636eaf1bfd0f10d9b9a5fbd1b1894"
 
 def _make_receipt(tmp_path):
     p = tmp_path / "root.bin.ots"
-    p.write_bytes(RECEIPT_948183_BYTES)
+    p.write_bytes(
+        build_ots_receipt(
+            file_digest=receipt_file_digest(ANCHOR_HEX),
+            branches=[{"ops": [], "attestation": ("bitcoin", 948183)}],
+        )
+    )
     return p
 
 
@@ -48,17 +53,17 @@ def test_cli_offline_only_without_expected_height_trims_http_poles(
         ["--anchor", ANCHOR_HEX, "--ots-proof", str(receipt)],
         capsys,
     )
-    # Structural pole has no expected_block_height -> structural-only
-    # acceptance based on the bytes containing a height-attestation
-    # marker. Receipt fixture contains 948183, so structural pole
-    # passes. OTS-CLI pole: real binary on PATH? Tests should not
-    # depend on that. We pass --skip-pole-implicit by relying on the
-    # ots binary being absent in CI: assert structural pole is in,
-    # ots-cli pole reported (ok or unavailable), HTTP poles absent.
-    assert "pole_python_stdlib" in body["pole_results"]
-    assert "pole_ots_cli" in body["pole_results"]
-    assert "pole_mempool_space" not in body["pole_results"]
-    assert "pole_esplora_blockstream" not in body["pole_results"]
+    # The pole detail moved under "anchor_verification": it is
+    # evidence for the root-authenticity claim, not the report itself.
+    poles = body["anchor_verification"]["pole_results"]
+    assert "pole_python_stdlib" in poles
+    assert "pole_ots_cli" in poles
+    assert "pole_mempool_space" not in poles
+    assert "pole_esplora_blockstream" not in poles
+    # Offline, with no block header and no manifest: nothing is
+    # contradicted and nothing is established. Exit 4, not 0.
+    assert body["overall_status"] == "not_checked"
+    assert rc == 4
 
 
 def test_cli_skip_all_poles_is_usage_error(tmp_path, capsys):
@@ -111,7 +116,7 @@ def test_cli_quorum_policy_passthrough(tmp_path, capsys):
         ],
         capsys,
     )
-    assert body["quorum_policy"] == "2-of-4"
+    assert body["anchor_verification"]["quorum_policy"] == "2-of-4"
 
 
 def test_cli_skip_pole_ots_cli(tmp_path, capsys):
@@ -128,5 +133,6 @@ def test_cli_skip_pole_ots_cli(tmp_path, capsys):
         ],
         capsys,
     )
-    assert "pole_ots_cli" not in body["pole_results"]
-    assert "pole_python_stdlib" in body["pole_results"]
+    poles = body["anchor_verification"]["pole_results"]
+    assert "pole_ots_cli" not in poles
+    assert "pole_python_stdlib" in poles

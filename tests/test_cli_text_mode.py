@@ -12,9 +12,10 @@ Brand-language pins (ADR-0055):
 * Operator-Plattform wording — "operator endpoint", not "user app".
 * Per-pole line carries a status symbol and the pole's substantive
   observation.
-* Block-end "Quorum conclusion" section names the threshold
-  explicitly so the external reviewer does not have to know the
-  policy enum.
+* Block-end "Conclusion" section states the verdict and, when the
+  verdict is not positive, names what was not checked — so the
+  external reviewer does not have to know the policy enum or infer
+  scope from a single word.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ import pytest
 from wakir_verify.cli import main as cli_main
 from wakir_verify.poles import HttpResponse
 
-from tests.fixtures import RECEIPT_948183_BYTES
+from tests.fixtures import build_ots_receipt, receipt_file_digest
 
 
 ANCHOR_HEX = "d16216b92bac7653828301b0b8b5595028a636eaf1bfd0f10d9b9a5fbd1b1894"
@@ -35,7 +36,12 @@ ANCHOR_HEX = "d16216b92bac7653828301b0b8b5595028a636eaf1bfd0f10d9b9a5fbd1b1894"
 
 def _make_receipt(tmp_path):
     p = tmp_path / "root.bin.ots"
-    p.write_bytes(RECEIPT_948183_BYTES)
+    p.write_bytes(
+        build_ots_receipt(
+            file_digest=receipt_file_digest(ANCHOR_HEX),
+            branches=[{"ops": [], "attestation": ("bitcoin", 948183)}],
+        )
+    )
     return p
 
 
@@ -65,10 +71,15 @@ def test_cli_text_mode_renders_offline_quorum_block(tmp_path, capsys):
     assert "Pole 3" not in out
     assert "Pole 4" not in out
     # Status symbols are ASCII
-    assert "[+]" in out or "[-]" in out
-    # Quorum-conclusion block is present and names a threshold word
-    assert "Quorum conclusion" in out
-    assert "threshold" in out
+    assert "[+]" in out or "[-]" in out or "[?]" in out
+    # Expectation changed with R2/R3: the closing block is the
+    # four-claim conclusion. A run with no manifest, no payload and no
+    # block header establishes none of the four, and the output has to
+    # say which — a bare threshold line let a reader supply the rest.
+    assert "Conclusion" in out
+    assert "NOT VERIFIED" in out
+    assert "Root authenticity" in out
+    assert "NOT CHECKED" in out
     # Operator-Plattform wording — must not use consumer-app language
     assert "consumer" not in out.lower()
     assert "end-user" not in out.lower()
@@ -86,7 +97,7 @@ def test_cli_text_mode_default_is_json_for_backwards_compat(tmp_path, capsys):
     body = json.loads(out)
     assert body["anchor_hash"] == ANCHOR_HEX
     # No human-text header should appear in JSON output
-    assert "Quorum conclusion" not in out
+    assert "Conclusion" not in out
 
 
 def test_cli_text_mode_carries_pole_substance(tmp_path, capsys):
@@ -103,10 +114,15 @@ def test_cli_text_mode_carries_pole_substance(tmp_path, capsys):
         ]
     )
     out = capsys.readouterr().out
-    # The structural pole describes the receipt parse
-    assert "OpenTimestamps" in out or "structurally" in out.lower()
-    # The ots-cli pole describes the upstream binary
-    assert "ots" in out.lower()
+    # The offline pole says what it established about the receipt.
+    # Expectation sharpened with R3: "structurally parses" was the
+    # whole substance sentence, and structure was the whole check.
+    # The sentence now has to name the root binding, because that is
+    # what the pole actually did.
+    assert "was made for this root" in out
+    assert "attests block height(s)" in out
+    # The ots-cli pole names the upstream subcommand it ran.
+    assert "ots verify -d" in out
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +146,18 @@ def test_cli_save_witnesses_persists_verification_json(tmp_path, capsys):
     assert out_path.exists()
     body = json.loads(out_path.read_text())
     assert body["anchor_hash"] == ANCHOR_HEX
-    # to_dict()-shape preservation
-    assert "pole_results" in body
-    assert "quorum" in body
+    # Expectation changed with R2/R3: the saved artefact is the full
+    # report, so a replaying auditor gets the four claims and not just
+    # the pole table. The pole detail is still there, one level down.
+    assert body["schema"] == "wakir-verification-report/v1"
+    assert [c["claim"] for c in body["claims"]] == [
+        "hashlist_consistency",
+        "event_binding",
+        "payload_check",
+        "root_authenticity",
+    ]
+    assert "pole_results" in body["anchor_verification"]
+    assert "quorum" in body["anchor_verification"]
 
 
 def test_cli_save_witnesses_works_with_text_format(tmp_path, capsys):
@@ -154,7 +179,7 @@ def test_cli_save_witnesses_works_with_text_format(tmp_path, capsys):
     body = json.loads(out_path.read_text())
     assert body["anchor_hash"] == ANCHOR_HEX
     text_stdout = capsys.readouterr().out
-    assert "Quorum conclusion" in text_stdout
+    assert "Conclusion" in text_stdout
 
 
 # ---------------------------------------------------------------------------

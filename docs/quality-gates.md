@@ -67,3 +67,56 @@ refresh copy and pins in one PR after confirming the change.
 **Evidence for audit consumers.** A green run is functional test
 evidence for the proof path at one commit pair; it is not an audit
 trail and makes no statement about governance or mandate compliance.
+
+## Verification semantics — `tests/test_negative_matrix.py`
+
+**What it proves.** That the verifier does not claim more than it
+checked. Every case in this file was reproduced against the code as of
+`23c3ee8` by the external re-review of 2026-09-14 and produced a
+positive or silent result; each is kept as a standing negative control
+with the pre-fix output quoted in the module docstring.
+
+The two headline cases:
+
+* **R3.** A file consisting of the OTS magic header plus the *text*
+  `BitcoinBlockHeaderAttestation(800000)` — not a timestamp proof —
+  reached a 3-of-4 quorum with the `ots` runner reporting failure, and
+  reached it identically for an unrelated `anchor_hash`. Three poles
+  that never compared the root outvoted the one that could have.
+* **R2.** Editing `event_id` and `payload_hash` in a manifest's event
+  records while leaving the stored leaf hashes and root untouched kept
+  `compute_manifest_consistency()` positive, because it folds the
+  stored hashes.
+
+**What it does not prove.** Nothing about Bitcoin: the suite is offline
+and the poles are driven through their injection seams. Confirming a
+Bitcoin attestation needs a block header, which is a deployment input
+(`--block-merkle-root`), not a test fixture.
+
+**The rule the gate encodes.** A positive overall verdict requires a
+*mandatory* pole — one that can bind the anchor to a Bitcoin
+attestation — to have done so. Supporting poles observe the chain and
+contribute evidence; no number of them substitutes for the mandatory
+check. `not_checked` is a distinct outcome from both `ok` and `failed`
+and must stay distinct: an honestly disabled time proof is acceptable,
+a false positive is not.
+
+## Real artefacts — `tests/test_real_receipts.py`
+
+**What it proves.** That the offline receipt walk and the manifest
+binding work on the genuine artefacts under
+`wakir-runtime/tests/fixtures/wat-*-real*/`, not only on fixtures this
+repository wrote for itself. Runs when `WAKIR_RUNTIME_CHECKOUT` points
+at a checkout (the compat workflow already sets it); skipped otherwise.
+
+**Two recorded facts, asserted rather than configured away.**
+
+* `wat-tv2-real` (four hours) carries genuine Bitcoin attestations.
+  Offline the verdict is `not_checked` with the attested block Merkle
+  root printed for manual checking; supplying a block header turns the
+  same input into `verified`.
+* `wat-tv3-real` and `wat-real-manifest` hold receipts that were never
+  upgraded past the calendar stage. They carry **no Bitcoin
+  attestation at all**, so no Bitcoin verification is possible from
+  them in their stored state. `structural_ok` is the correct outcome
+  and is asserted as such.

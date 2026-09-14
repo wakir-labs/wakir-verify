@@ -16,9 +16,18 @@ entry point, :func:`verify_wat_anchor`, that runs an OpenTimestamps
 proof and the Merkle-root it attests to through four independent
 implementations (`pole_python_stdlib`, `pole_ots_cli`,
 `pole_mempool_space`, `pole_esplora_blockstream`) and emits a
-quorum verdict. Cross-library witness is the contract: if a third
-party can reproduce the verdict without any Wakir code, the audit
-trail's Bitcoin-anchor claim is independently checkable.
+verdict. Cross-library witness is the contract: if a third party can
+reproduce the verdict without any Wakir code, the audit trail's
+Bitcoin-anchor claim is independently checkable.
+
+Four claims, not one word
+-------------------------
+
+A verification result is four separate statements — hash-list
+consistency, event binding, payload check, root authenticity — with an
+``ok`` / ``failed`` / ``not_checked`` status each. See
+:mod:`wakir_verify.claims`. ``not_checked`` is never shorthand for
+``ok``: a verifier that cannot make a claim says so.
 
 Design posture
 --------------
@@ -34,12 +43,21 @@ Design posture
   inside the sub-package other than the shared dataclass module.
   Replacing or removing one pole touches exactly one file.
 
-* **Quorum default is 3/4.** A single pole disagreeing with three
-  others (because of, e.g., an Esplora 503 or a mempool.space
-  rate-limit) must not flip the overall verdict. A 3/4 quorum
-  threshold tolerates one transient pole failure without
-  weakening the cross-library witness contract; an operator can
-  request 4/4 with ``--pols all`` for stricter mode.
+* **The mandatory check outranks the quorum.** Poles carry a role.
+  ``pole_python_stdlib`` and ``pole_ots_cli`` are *mandatory*: they
+  can tie an anchor to a Bitcoin attestation. The two Esplora poles
+  are *supporting*: they observe the chain. A positive verdict needs
+  a mandatory pole to have bound the root, the quorum threshold to be
+  met, and no pole to have reported a contradiction. Before
+  2026-09-14 the threshold was the entire decision, and three poles
+  that never looked at the root could — and did — outvote the one
+  that reported failure.
+
+* **Quorum default is 3/4** for the supporting evidence. A single
+  pole failing on an Esplora 503 or a rate-limit does not flip a
+  verdict that a mandatory pole established; ``--pols all`` is the
+  stricter mode. What the threshold can no longer do is manufacture a
+  verdict on its own.
 
 * **Sandbox-safe by default.** The HTTP-shaped poles
   (``pole_mempool_space``, ``pole_esplora_blockstream``) accept a
@@ -47,6 +65,13 @@ Design posture
   HTTP client. The ``ots`` CLI pole accepts a per-call
   ``ots_runner`` callable for the same reason. No live network
   call happens in the test suite.
+
+  Note that ``pole_ots_cli`` in its default ``verify`` mode is not
+  offline *in production*: upstream ``ots verify`` upgrades pending
+  attestations against the calendars and reads a block header from a
+  Bitcoin node. ``pole_python_stdlib`` is the offline path, and it is
+  the one that reports ``not_checked`` rather than reaching for the
+  network on its own.
 
 Public API
 ----------
