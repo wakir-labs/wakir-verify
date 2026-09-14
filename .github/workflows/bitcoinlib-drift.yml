@@ -1,0 +1,186 @@
+# SPDX-FileCopyrightText: 2026 Callandor GmbH and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# bitcoinlib-drift — multi-version python-bitcoinlib drift matrix.
+# ------------------------------------------------------------------------------
+#
+# Absorbed from wakir-runtime (`.github/workflows/external-verifier-drift.yml`)
+# under ADR-0074, which removes the duplicated four-pole verifier from
+# `wakir-runtime/wat/anchor/external_verifier/**`. The drift *test* already
+# lived here as `tests/test_python_bitcoinlib_drift.py`, but nothing ever
+# installed `python-bitcoinlib`, so `pytest.importorskip` skipped the whole
+# module on every run. Without this workflow the probe is dead code and the
+# deletion in wakir-runtime would be a net loss of coverage.
+#
+# Purpose: prove that the verifier surface — and any auditor-injected
+# `python-bitcoinlib`-backed `proof_reader` — stays byte-identity-stable
+# across multiple python-bitcoinlib releases. This catches silent drift
+# where, say, a future release flips the block-hash byte order in `b2lx`
+# or changes the OP_RETURN script canonicalisation; an auditor running
+# their own check would otherwise see a disagreement-without-cause six
+# months later.
+#
+# Matrix dimension
+# ----------------
+# python-bitcoinlib versions, pinned to the PyPI-confirmed lineage
+# observed on 2026-05-13 and re-run green against this repository on
+# 2026-09-14 (all three pins, 3 passed each):
+#
+#   * 0.11.2 — 2022-08-28; the prior-LTS shape we keep covered so the
+#     historical "Satoshi-display-order" contract stays pinned.
+#   * 0.12.1 — 2023-04-27; first 0.12.x line release.
+#   * 0.12.2 — 2023-06-03; current stable head as of the original
+#     workflow's authoring date.
+#
+# We intentionally do NOT include a floating "latest" tag: a floating
+# tag in a drift matrix defeats the matrix (you cannot tell whether a
+# failure is a regression in the verifier or an upstream version-roll).
+# When python-bitcoinlib publishes a new release, the matrix is bumped
+# by adding the new version as an explicit pin.
+#
+# Skip-marker posture
+# -------------------
+# Each matrix job installs its pinned version. If a job fails at the
+# install step (e.g. a future Python interpreter drops support for an
+# old python-bitcoinlib release), it emits a `skip-with-marker` summary
+# line rather than failing CI: the matrix lane is a drift-detection net,
+# not a hard block on legacy-version availability. `continue-on-error`
+# is gated on the install step alone; once install succeeds, the test
+# step is a hard pass/fail.
+#
+# This lane is deliberately NOT a required status check — it probes a
+# third-party library lineage we do not control. The required proof-path
+# contexts are `ci` and `compat` (see docs/quality-gates.md).
+
+name: bitcoinlib-drift
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'wakir_verify/**'
+      - 'tests/test_python_bitcoinlib_drift.py'
+      - '.github/workflows/bitcoinlib-drift.yml'
+      - 'pyproject.toml'
+  pull_request:
+    paths:
+      - 'wakir_verify/**'
+      - 'tests/test_python_bitcoinlib_drift.py'
+      - '.github/workflows/bitcoinlib-drift.yml'
+      - 'pyproject.toml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drift-matrix:
+    name: python-bitcoinlib ${{ matrix.bitcoinlib }} on py${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      # `fail-fast: false` is critical for a drift matrix: we want to
+      # see ALL versions' verdicts in a single run, not just the first
+      # failure.
+      fail-fast: false
+      matrix:
+        python: ['3.12']
+        bitcoinlib:
+          - '0.11.2'
+          - '0.12.1'
+          - '0.12.2'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install package and test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Install python-bitcoinlib==${{ matrix.bitcoinlib }} (skip-with-marker on fail)
+        id: install_bitcoinlib
+        continue-on-error: true
+        run: |
+          python -m pip install "python-bitcoinlib==${{ matrix.bitcoinlib }}"
+
+      - name: Mark job as skip-with-marker if install failed
+        if: steps.install_bitcoinlib.outcome == 'failure'
+        run: |
+          echo "::warning::python-bitcoinlib==${{ matrix.bitcoinlib }} not installable on py${{ matrix.python }} — skip-with-marker."
+          echo "SKIP_DRIFT=1" >> "$GITHUB_ENV"
+
+      - name: Verify python-bitcoinlib is importable
+        if: env.SKIP_DRIFT != '1'
+        run: |
+          python - <<'PY'
+          import sys
+
+          import bitcoin
+
+          ver = getattr(bitcoin, "__version__", None)
+          if ver is None:
+              print(
+                  "drift-matrix invariant broken: bitcoin.__version__ missing",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          print(f"drift-matrix: python-bitcoinlib import ok, version={ver}")
+          PY
+
+      - name: Assert the drift probe is not skipped
+        if: env.SKIP_DRIFT != '1'
+        # The probe is `pytest.importorskip`-guarded. A silently skipped
+        # matrix job is indistinguishable from a green one in the run
+        # summary — that is exactly how this probe sat dormant in this
+        # repository before ADR-0074. `-W error::pytest.PytestUnraisable`
+        # would not catch a skip, so we assert the collected/passed count
+        # directly.
+        run: |
+          python -m pytest \
+            tests/test_python_bitcoinlib_drift.py \
+            -v --tb=short -rs \
+            --junitxml=drift-results.xml
+          python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          suite = ET.parse("drift-results.xml").getroot().find("testsuite")
+          tests = int(suite.get("tests", "0"))
+          skipped = int(suite.get("skipped", "0"))
+          print(f"drift-matrix: tests={tests} skipped={skipped}")
+          if tests == 0 or skipped:
+              print(
+                  "drift-matrix invariant broken: the probe skipped despite a "
+                  "successful python-bitcoinlib install",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          PY
+
+      - name: Run the full verifier suite against this pinned version
+        if: env.SKIP_DRIFT != '1'
+        # Co-installation check: `wakir_verify` itself does not import
+        # `bitcoin`, so this proves the pinned library's presence does not
+        # perturb the verifier, rather than probing drift in substance.
+        run: |
+          python -m pytest tests/ -q --tb=short
+
+      - name: Drift summary
+        if: always()
+        run: |
+          if [ "${SKIP_DRIFT}" = "1" ]; then
+            echo "drift-matrix[python-bitcoinlib==${{ matrix.bitcoinlib }}]: skipped (install failure)"
+          else
+            echo "drift-matrix[python-bitcoinlib==${{ matrix.bitcoinlib }}]: probed"
+          fi
