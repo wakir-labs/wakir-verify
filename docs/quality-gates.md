@@ -149,3 +149,50 @@ required proof-path contexts stay `ci` and
 hard-fail on is a skipped probe: once the pinned install succeeds, the
 job asserts from the JUnit report that the module ran and skipped
 nothing — the failure mode that let this probe sit dormant.
+
+## `pytest (py3.13)` — lane inventory (`tests/test_required_lane_inventory.py`)
+
+**What it proves.** That the required lane *found* every test module —
+not just that the assertions which ran, passed. A green tick is evidence
+about executed assertions only; a module that never collects is
+indistinguishable from one that collected and passed.
+
+**Why it is a test and not a workflow step.** It runs inside the
+existing required context, so it needs no new status check and no
+branch-protection change. (A new required context has to be registered
+with its exact job display name; getting that wrong leaves PRs pending
+forever.) The check shells out to `pytest tests/ --collect-only` and
+reads the result.
+
+**The three ways a module leaves a green lane**, and what closes each:
+
+| Failure mode | Closed by |
+|---|---|
+| collection error swallowed (e.g. `--continue-on-collection-errors` added to `addopts`) | `test_collect_only_reports_no_errors` — pins both the `0` exit code and the absence of `ERROR` lines |
+| module-level `pytest.importorskip` on something the lane installs | `test_import_guards_are_on_non_lane_imports_only` |
+| `importorskip` inside a helper or fixture — removes individual tests, quieter than the above | same test; the scan walks the whole AST, not only module-level statements |
+
+**The recorded occasion.** `tests/test_python_bitcoinlib_drift.py` hung
+on `importorskip` from the repo split until ADR-0074 and no lane
+installed the library, so the one probe that compares against an
+independent third-party implementation was skipped on every run. It was
+found by hand, months later. Two further guards — `hypothesis` at module
+level in `test_property_hypothesis.py`, `jsonschema` twice inside a
+helper in `test_proof_path_vectors.py` — named distributions that
+**every** pytest lane here installs via `.[test]`; they could only ever
+have hidden tests, never adapted to a leaner lane. All three were
+replaced by plain imports.
+
+**The one guard that stays**, with its reason recorded in
+`ALLOWED_IMPORT_GUARDS`: `bitcoin` (python-bitcoinlib) is deliberately
+not a dependency of this package and is installed only by the
+`bitcoinlib-drift` matrix, which itself hard-fails on a skipped probe.
+`test_guarded_module_contributes_when_its_import_is_available` keeps that
+allowance conditional: wherever `bitcoin` imports, the module must
+collect.
+
+**Premise check.** `test_every_lane_that_runs_pytest_installs_the_test_extra`
+asserts that every workflow running pytest installs `".[test]"`. That
+premise is what makes the plain `hypothesis`/`jsonschema` imports correct;
+a future lane that trims the extra fails here rather than at a confusing
+import error.
