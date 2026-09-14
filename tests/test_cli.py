@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Callandor GmbH and contributors
 
-"""CLI-level smoke tests for ``wat-verify``.
+"""CLI-level smoke tests for the ``wakir-verify`` console script.
 
 We do not exercise the HTTP poles end-to-end here (those need
 transport injection that the argparse surface does not expose);

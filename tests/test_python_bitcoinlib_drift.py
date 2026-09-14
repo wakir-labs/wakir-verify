@@ -21,7 +21,9 @@ This module is the canary. It is skipped when ``python-bitcoinlib`` is
 not installed (the default in the standard test lane) and runs a
 minimal cross-check when the CI matrix installs the library against
 one of the pinned versions ("0.11.2" / "0.12.1" / "0.12.2"). The
-matrix is wired in ``.github/workflows/external-verifier-drift.yml``.
+matrix is wired in ``.github/workflows/bitcoinlib-drift.yml``, which
+also asserts that this module did *not* skip once the install step
+succeeded — a silently skipped probe reads as green otherwise.
 
 What we actually probe
 ----------------------

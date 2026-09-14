@@ -120,3 +120,32 @@ at a checkout (the compat workflow already sets it); skipped otherwise.
   attestation at all**, so no Bitcoin verification is possible from
   them in their stored state. `structural_ok` is the correct outcome
   and is asserted as such.
+
+## `bitcoinlib-drift` — `.github/workflows/bitcoinlib-drift.yml`
+
+**What it proves.** That `wakir_verify` stays stable across the
+`python-bitcoinlib` lineage an external auditor is likely to install.
+The verifier ships a zero-PyPI-surface structural pole and never
+imports `bitcoin` itself, but the pole accepts an injected
+`proof_reader`, and the Position-Paper §L4-References annex names
+`python-bitcoinlib` as the canonical stdlib-OTS-parser axis. If a
+future release flips block-hash byte order in `b2lx`, changes hex
+casing, or alters OP_RETURN script canonicalisation, an auditor's
+independent check would silently disagree with ours months later.
+The matrix pins `0.11.2` / `0.12.1` / `0.12.2` — no floating tag, so a
+red lane always names a cause.
+
+**Why it exists here.** `tests/test_python_bitcoinlib_drift.py` was in
+this repository from the start, but nothing ever installed
+`python-bitcoinlib`, so `pytest.importorskip` skipped the module on
+every single run. The matrix that gave it teeth lived in
+`wakir-runtime` and drove the duplicated verifier copy that ADR-0074
+removes. The workflow was absorbed here with the copy's deletion.
+
+**Not a required check, on purpose.** It probes a third-party library
+lineage we do not control; an upstream yank must not block a PR. The
+required proof-path contexts stay `ci` and
+`compat (proof-path against runtime main)`. What the lane *does*
+hard-fail on is a skipped probe: once the pinned install succeeds, the
+job asserts from the JUnit report that the module ran and skipped
+nothing — the failure mode that let this probe sit dormant.

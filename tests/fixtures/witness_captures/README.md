@@ -3,15 +3,15 @@ SPDX-License-Identifier: CC-BY-4.0
 SPDX-FileCopyrightText: 2026 Callandor GmbH and contributors
 -->
 
-# `tests/wat/external_verifier/witness_captures/` — Saved Witness Fixtures
+# `tests/fixtures/witness_captures/` — Saved Witness Fixtures
 
 This directory holds the brand-proof witness-capture JSON artefacts
-the `wat-verify --capture-witnesses` command emits. Each file
+the `wakir-verify --capture-witnesses` command emits. Each file
 records the canonical Bitcoin block hash observed by mempool.space
 and blockstream.info at the moment of capture, pinned next to the
 WAT anchor hash and the block height.
 
-The fixtures are checked into the runtime so the test suite under
+The fixtures are checked into this repository so the test suite under
 `test_witness_captures.py` can replay them hermetically. The
 external-verifier contract is "any third-party auditor can rerun the
 verifier with the saved witness JSON and the .ots receipt to
@@ -38,7 +38,7 @@ tests; no live capture file may carry the marker.
 # offline replay: takes a saved witness file and a .ots receipt,
 # pins the expected_block_hash from the saved canonical hash,
 # runs the 4-pole quorum.
-python -m wat.anchor.external_verifier.cli \
+python -m wakir_verify.cli \
     --anchor    "$(jq -r .anchor_hash       <witness-file>.json)" \
     --ots-proof <receipt-path> \
     --expected-block-height $(jq -r .block_height  <witness-file>.json) \
