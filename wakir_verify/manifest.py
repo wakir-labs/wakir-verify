@@ -35,13 +35,48 @@ from typing import Any, List, Mapping, Optional, Sequence
 
 @dataclasses.dataclass(frozen=True)
 class ManifestLeaf:
-    """A single manifest leaf in the canonical v1 envelope shape."""
+    """A single manifest leaf in the canonical v1 envelope shape.
+
+    The reader used to keep ``event_id`` and ``leaf_hash`` and drop
+    everything else. That made it structurally impossible for the
+    verifier to recompute a leaf hash — it could only re-add numbers
+    the manifest asserted about itself — so an edit to the event
+    fields with the stored hashes left alone went unnoticed.
+
+    The three remaining B1 fields are optional here because the
+    dataclass is the reader for a format it does not own, but they are
+    not in fact optional in the format: ``wakir-wat-manifest/v1``
+    writers emit all four per leaf (``wat/cmd/aggregator_cli.py`` in
+    wakir-runtime@9bb5ab1, verified 2026-09-14 against the four real
+    manifests under ``tests/fixtures/wat-tv*-real/``). ``None`` means
+    "this manifest did not carry the field", which
+    :mod:`wakir_verify.binding` reports as *unchecked*, never as
+    *checked and fine*.
+    """
 
     event_id: str
     leaf_hash: bytes
+    time: Optional[str] = None
+    payload_hash: Optional[str] = None
+    capability_token_hash: Optional[str] = None
 
     def hex(self) -> str:
         return self.leaf_hash.hex()
+
+    @property
+    def has_event_fields(self) -> bool:
+        """True when all four B1 fields are present.
+
+        ``capability_token_hash`` is legitimately the empty string for
+        a non-capability event, so presence is tested against ``None``
+        and not against truthiness — the distinction the projection
+        spec draws between "no capability" and "field absent".
+        """
+        return (
+            self.time is not None
+            and self.payload_hash is not None
+            and self.capability_token_hash is not None
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -112,6 +147,16 @@ def _expect_hex(value: Any, field: str, length_bytes: int) -> bytes:
     return raw
 
 
+def _optional_str(value: Any) -> Optional[str]:
+    """Pass through strings, map everything else (incl. absent) to None.
+
+    A non-string where a B1 field belongs is treated as absent rather
+    than coerced: ``str(None)`` would silently produce the text
+    ``"None"`` and hash to something plausible-looking.
+    """
+    return value if isinstance(value, str) else None
+
+
 def load_manifest_from_file(path: str | Path) -> Manifest:
     """Load a manifest JSON file from *path* into a :class:`Manifest`.
 
@@ -163,7 +208,17 @@ def load_manifest_from_dict(data: Mapping[str, Any]) -> Manifest:
         leaf_hash = _expect_hex(
             leaf.get("leaf_hash"), f"leaves[{idx}].leaf_hash", 32
         )
-        leaves.append(ManifestLeaf(event_id=event_id, leaf_hash=leaf_hash))
+        leaves.append(
+            ManifestLeaf(
+                event_id=event_id,
+                leaf_hash=leaf_hash,
+                time=_optional_str(leaf.get("time")),
+                payload_hash=_optional_str(leaf.get("payload_hash")),
+                capability_token_hash=_optional_str(
+                    leaf.get("capability_token_hash")
+                ),
+            )
+        )
 
     hour = data.get("hour")
     if hour is not None and not isinstance(hour, str):
@@ -186,9 +241,19 @@ def compute_manifest_consistency(manifest: Manifest) -> bool:
     not raise) on mismatch; callers should decide whether to log,
     fail, or surface the mismatch in a verifier report.
 
-    Note: this is the *internal* consistency check. It says nothing
-    about whether the manifest is anchored on Bitcoin. The OTS
-    anchor check is in :mod:`wakir_verify.ots_verify`.
+    Note: this is the *internal* consistency check, and the word
+    "internal" is load-bearing. The function folds the leaf hashes the
+    manifest **stores**; it does not recompute them from the event
+    fields, so an edit to ``event_id`` or ``payload_hash`` that leaves
+    the stored ``leaf_hash`` and root untouched passes here. That is
+    the documented contract of this function and it is deliberately
+    unchanged — the defect was never here, it was in callers deriving
+    event integrity from it.
+
+    For the event-level statement use
+    :func:`wakir_verify.binding.check_event_binding`, which recomputes
+    the leaf hash from the four B1 fields. For the Bitcoin statement
+    see :mod:`wakir_verify.ots_verify`.
     """
     from wakir_verify.merkle_proof import root_hash
 
