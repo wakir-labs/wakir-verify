@@ -406,10 +406,91 @@ def parse_ots_receipt(blob: bytes) -> OtsReceipt:
     )
 
 
+# ---------------------------------------------------------------------------
+# Root binding
+# ---------------------------------------------------------------------------
+
+
+#: The WAT pipeline writes the 32-byte Merkle root to ``root.bin`` and
+#: runs ``ots stamp root.bin`` (``wat/anchor/ots_anchor.py``), so the
+#: receipt's file digest is SHA-256 *of those 32 bytes*, not the root
+#: itself. Verified against the four real receipts in wakir-runtime
+#: @9bb5ab1 on 2026-09-14.
+BINDING_ROOT_FILE = "sha256(root-bytes)"
+
+#: ``ots stamp -d <digest>`` stamps a digest directly, so the receipt's
+#: file digest *is* the root. Not what WAT emits today; accepted so a
+#: receipt made this way is not rejected for the wrong reason.
+BINDING_ROOT_DIRECT = "root-digest-direct"
+
+
+@dataclasses.dataclass(frozen=True)
+class AnchorBinding:
+    """Whether a receipt was made for a specific Merkle root.
+
+    This is the check whose absence let a receipt — or a file that was
+    not a receipt at all — vouch for an unrelated root. ``mode`` names
+    *how* the root reaches the receipt so the evidence is readable
+    rather than a bare boolean.
+    """
+
+    bound: bool
+    mode: Optional[str]
+    anchor_hash: str
+    file_digest_hex: str
+    expected: Dict[str, str]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "bound": self.bound,
+            "mode": self.mode,
+            "anchor_hash": self.anchor_hash,
+            "receipt_file_digest": self.file_digest_hex,
+            "accepted_digests": dict(self.expected),
+        }
+
+
+def match_anchor_binding(anchor_hash: str, receipt: OtsReceipt) -> AnchorBinding:
+    """Decide whether *receipt* is a timestamp for *anchor_hash*.
+
+    Accepts the two ways a 32-byte root reaches an OTS receipt: stamped
+    as the contents of a file (the WAT convention) or stamped as a bare
+    digest. Anything else — including a receipt for a different root —
+    comes back ``bound=False``, which callers must treat as a failure,
+    not as an absence of information.
+    """
+    anchor = (anchor_hash or "").strip().lower()
+    expected: Dict[str, str] = {BINDING_ROOT_DIRECT: anchor}
+    try:
+        raw = bytes.fromhex(anchor)
+    except ValueError:
+        raw = b""
+    if len(raw) == 32:
+        expected[BINDING_ROOT_FILE] = hashlib.sha256(raw).hexdigest()
+
+    mode: Optional[str] = None
+    for candidate_mode, digest in expected.items():
+        if digest and digest == receipt.file_digest_hex:
+            mode = candidate_mode
+            break
+
+    return AnchorBinding(
+        bound=mode is not None,
+        mode=mode,
+        anchor_hash=anchor,
+        file_digest_hex=receipt.file_digest_hex,
+        expected=expected,
+    )
+
+
 __all__ = [
+    "AnchorBinding",
     "Attestation",
+    "BINDING_ROOT_DIRECT",
+    "BINDING_ROOT_FILE",
     "OTS_MAGIC",
     "OtsParseError",
     "OtsReceipt",
+    "match_anchor_binding",
     "parse_ots_receipt",
 ]
