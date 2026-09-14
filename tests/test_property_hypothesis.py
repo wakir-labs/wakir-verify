@@ -88,13 +88,17 @@ from typing import Any
 
 import pytest
 
-# Skip the whole module cleanly when hypothesis is absent (e.g. the
-# sandbox-CI lane which intentionally trims optional test deps).
-hypothesis = pytest.importorskip("hypothesis")
+# hypothesis is declared in [project.optional-dependencies].test, and
+# every workflow in this repository that runs pytest installs ".[test]"
+# (ci.yml, compat.yml, bitcoinlib-drift.yml). There is no lane that trims
+# it, so a `pytest.importorskip` here could only ever hide this module
+# from a green tick — which is exactly what it did to
+# tests/test_python_bitcoinlib_drift.py until ADR-0074. A plain import
+# fails loudly instead; tests/test_required_lane_inventory.py pins that
+# no import-time guard returns.
+from hypothesis import given, settings, strategies as st
 
-from hypothesis import given, settings, strategies as st  # noqa: E402
-
-from wakir_verify import (  # noqa: E402
+from wakir_verify import (
     AnchorVerification,
     QuorumPolicy,
     PoleResult,

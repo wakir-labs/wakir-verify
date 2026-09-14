@@ -147,7 +147,11 @@ def _load_schema(path: Path) -> Dict[str, Any]:
 
 
 def _validator(schema: Dict[str, Any]):
-    jsonschema = pytest.importorskip("jsonschema")
+    # Plain import, never importorskip: jsonschema is declared in the
+    # ".[test]" extra that every pytest lane installs. A guard here would
+    # turn "the schema was never validated" into a silent pass.
+    import jsonschema
+
     jsonschema.Draft202012Validator.check_schema(schema)
     return jsonschema.Draft202012Validator(schema)
 
@@ -316,7 +320,8 @@ def test_proof_docs_validate_against_protocol_canonical_schema(source: str, name
 
 def test_protocol_canonical_schema_rejects_extra_and_missing_fields() -> None:
     """Negative control: the armed schema actually bites."""
-    jsonschema = pytest.importorskip("jsonschema")
+    import jsonschema
+
     validator = _validator(_canonical_schema())
     doc = dict(_load_vector("hermetic", "vector-2.json")["proofs"][2])
     validator.validate(doc)  # honest document passes
